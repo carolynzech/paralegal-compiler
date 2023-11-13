@@ -31,43 +31,43 @@ sig Ctrl extends Function {
 }
 
 one sig b extends Label {}
-one sig exception extends Label {}
 one sig a extends Label {}
+one sig exception extends Label {}
 
 
 inst Flows {
-    Label = `a+`b+`exception
-    a = `a
+    Label = `a+`exception+`b
     exception = `exception
     b = `b
-    CallSite = `cs_g_728b5e_2c27f1
-    FormalParameter = `fp0_g_728b5e+`fp0_f_5981d5
-    Src = CallSite+FormalParameter
+    a = `a
+    CallSite = `cs_g_728b5e_1f7804
+    FormalParameter = `fp0_f_5981d5+`fp0_g_728b5e
+    Src = FormalParameter+CallSite
     Return = `Return
-    CallArgument = `arg0_cs_g_728b5e_2c27f1
-    Sink = CallArgument+Return
+    CallArgument = `arg0_cs_g_728b5e_1f7804
+    Sink = Return+CallArgument
     Type = none
     Ctrl = `f_5981d5
-    Function = `f_5981d5+`g_728b5e + Ctrl
-    Object = Function+Src+Sink+Type
+    Function = `g_728b5e+`f_5981d5 + Ctrl
+    Object = Type+Function+Src+Sink
     
     flow = 
-        (`cs_g_728b5e_2c27f1)->(`Return) +
-        (`fp0_f_5981d5)->(`arg0_cs_g_728b5e_2c27f1)
+        (`fp0_f_5981d5)->(`arg0_cs_g_728b5e_1f7804) +
+        (`cs_g_728b5e_1f7804)->(`Return)
     ctrl_flow = 
         none->none
     types = 
         none->none
     labels = (
+        (`arg0_cs_g_728b5e_1f7804 + `g_728b5e + `fp0_g_728b5e)->(`b) +
         (`f_5981d5 + `fp0_f_5981d5)->(`a) +
-        (`arg0_cs_g_728b5e_2c27f1 + `g_728b5e + `fp0_g_728b5e)->(`b) +
         none->none
     )
     arg_call_site = (
-        (`arg0_cs_g_728b5e_2c27f1)->(`cs_g_728b5e_2c27f1)
+        (`arg0_cs_g_728b5e_1f7804)->(`cs_g_728b5e_1f7804)
     )
     function = (
-        (`cs_g_728b5e_2c27f1)->(`g_728b5e)
+        (`cs_g_728b5e_1f7804)->(`g_728b5e)
     )
     otype = (
         none->none
@@ -77,6 +77,6 @@ inst Flows {
         (`fp0_g_728b5e)->(`g_728b5e)
     )
     calls = 
-        (`f_5981d5)->(`cs_g_728b5e_2c27f1)
+        (`f_5981d5)->(`cs_g_728b5e_1f7804)
     
 }

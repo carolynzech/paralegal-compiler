@@ -1,9 +1,11 @@
 use std::env;
 use std::fs;
 
+use compile::compile;
 use compile::parse;
+use std::io::Result;
 
-fn run(args: &Vec<String>) {
+fn run(args: &Vec<String>) -> Result<()> {
     if args.len() < 1 {
         panic!("Need to pass path to policy file");
     }
@@ -14,21 +16,22 @@ fn run(args: &Vec<String>) {
         .replace(" ", "");
     println!("Policy is {}", policy);
 
-    // business logic
     let res = parse(&policy);
-    // todo: output code based on res
+    match res {
+        Ok((remainder, parsed)) => {
+            if !remainder.is_empty() {
+                panic!("failed to parse entire policy");
+            } else {
+                compile(&parsed)?;
+            }
+        }
+        Err(e) => panic!("{}", e),
+    };
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    run(&args);
+    run(&args)?;
+    Ok(())
 }
-
-/*
-Road map:
--- read in policy text from file
--- check for proper formatting (optional I guess)
--- parse
--- generate boilerplate
--- then specific policy from parser output
- */
