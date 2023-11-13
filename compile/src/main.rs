@@ -9,11 +9,14 @@ fn run(args: &Vec<String>) {
     }
     let policy_file = &args[1];
     println!("Policy file is {}", policy_file);
-    let policy = fs::read_to_string(policy_file).expect("Could not read policy file");
+    let policy = fs::read_to_string(policy_file)
+        .expect("Could not read policy file")
+        .replace(" ", "");
     println!("Policy is {}", policy);
 
     // business logic
-    parse(&policy);
+    let res = parse(&policy);
+    // todo: output code based on res
 }
 
 fn main() {
