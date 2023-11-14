@@ -40,10 +40,7 @@ impl ContextExt for Context {
 
 fn main() -> Result<()> {
     let dir = ".";
-    let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    cmd.get_command()
-        .args(["--inline-elision", "--model-version", "v2"]);
-
+    let cmd = paralegal_policy::SPDGGenCommand::global();
     cmd.run(dir)?.with_context(pol)?;
     println!("Policy successful");
     Ok(())

@@ -38,18 +38,15 @@ impl ContextExt for Context {
 
 fn main() -> Result<()> {
     let dir = ".";
-    let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    cmd.get_command()
-        .args(["--inline-elision", "--model-version", "v2"]);
-
+    let cmd = paralegal_policy::SPDGGenCommand::global();
     cmd.run(dir)?.with_context(pol)?;
     println!("Policy successful");
     Ok(())
 }
 
 policy!(pol, ctx {
-            let mut a_nodes = ctx.marked_nodes(marker!(a));
-            let mut b_nodes = ctx.marked_nodes(marker!(b));
-            assert_error!(ctx, a_nodes.any(|a| b_nodes.any(|b| ctx.flows_to(a, b, EdgeType::Data))));
-            Ok(())
-        });
+    let mut a_nodes = ctx.marked_nodes(marker!(a));
+    let mut b_nodes = ctx.marked_nodes(marker!(b));
+    assert_error!(ctx, a_nodes.any(|a| b_nodes.any(|b| ctx.flows_to(a, b, EdgeType::Data))));
+    Ok(())
+});
