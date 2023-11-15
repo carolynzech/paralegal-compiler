@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 nom = "7.1.3"
 anyhow = "1"
-paralegal-policy = { path = "../../../paralegal/paralegal/crates/paralegal-policy" }
-paralegal = { path = "../../../paralegal/paralegal/crates/paralegal" }
+paralegal-policy = { path = "../../paralegal/paralegal/crates/paralegal-policy" }
+paralegal = { path = "../../paralegal/paralegal/crates/paralegal" }
 lazy_static = "1"
+handlebars = "4.5.0"

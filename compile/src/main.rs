@@ -3,26 +3,28 @@ use std::fs;
 
 use compile::compile;
 use compile::parse;
+use std::collections::HashMap;
 use std::io::Result;
 
 fn run(args: &Vec<String>) -> Result<()> {
-    if args.len() < 1 {
+    if args.len() < 2 {
         panic!("Need to pass path to policy file");
     }
     let policy_file = &args[1];
-    println!("Policy file is {}", policy_file);
     let policy = fs::read_to_string(policy_file)
         .expect("Could not read policy file")
         .replace(" ", "");
-    println!("Policy is {}", policy);
 
     let res = parse(&policy);
+
+    let mut map: HashMap<String, String> = HashMap::new();
+
     match res {
         Ok((remainder, parsed)) => {
             if !remainder.is_empty() {
                 panic!("failed to parse entire policy");
             } else {
-                compile(&parsed)?;
+                compile(&parsed, &mut map)?;
             }
         }
         Err(e) => panic!("{}", e),

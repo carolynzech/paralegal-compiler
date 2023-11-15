@@ -1,5 +1,5 @@
 [package]
-name = "mvp"
+name = "test-programs"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
-paralegal-policy = { path = "../../../paralegal/paralegal/crates/paralegal-policy" }
-paralegal = { path = "../../../paralegal/paralegal/crates/paralegal" }
+paralegal-policy = { path = "../../paralegal/paralegal/crates/paralegal-policy" }
+paralegal = { path = "../../paralegal/paralegal/crates/paralegal" }
 lazy_static = "1"

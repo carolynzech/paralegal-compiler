@@ -3,12 +3,12 @@ use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, EdgeTy
 use std::sync::Arc;
 
 macro_rules! marker {
-    ($name:ident) => {{
+    ($name:ident) => ({
         lazy_static::lazy_static! {
             static ref MARKER: Marker = Identifier::new_intern(stringify!($name));
         }
         *MARKER
-    }};
+    });
 }
 
 macro_rules! policy {
@@ -36,9 +36,15 @@ impl ContextExt for Context {
     }
 }
 
+
+
+policy!(pol, ctx {
+        {{policy}} 
+    });
+
 fn main() -> Result<()> {
     let dir = ".";
-    let mut cmd = paralegal_policy::SPDGGenCommand::global();
+    let cmd = paralegal_policy::SPDGGenCommand::global();
     cmd.run(dir)?.with_context(pol)?;
     println!("Policy successful");
     Ok(())

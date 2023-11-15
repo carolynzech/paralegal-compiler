@@ -1,3 +1,4 @@
+use handlebars::{no_escape, Handlebars};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
@@ -5,15 +6,24 @@ use nom::{
     sequence::tuple,
     IResult,
 };
-
+use std::collections::HashMap;
 use std::fs;
 use std::io::Result;
 
+// template names
+const BASE_TEMPLATE: &str = "base";
+const FLOWS_TO_TEMPLATE: &str = "flows-to";
+
 /* TODOs
+    (Paralegal Functionality)
     - variable translation needs to be reversed: currently policies written with (quantifier + marker,
         which parse translates to variable, needs to go the other way.
+
+    (Good Practice / User Experience / Nits)
     - better error handling
-    - cargo new for the policy and write a boilerplate a Cargo.toml for it as well
+    - pass template file paths as arguments instead of string literals
+    - escaping {{}} in Rust code w/o overwriting no-escape for HTML characters
+    - cargo new for the policy and write a template a Cargo.toml for it as well
 */
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -101,31 +111,48 @@ pub fn parse<'a>(s: &'a str) -> Res<&str, FlowsTo<'a>> {
     Ok(res)
 }
 
-fn compile_flows_to<'a>(f: &FlowsTo<'a>) -> Result<()> {
-    let boilerplate =
-        fs::read_to_string("src/boilerplate.txt").expect("Could not read boilerplate code");
+fn compile_flows_to<'a>(
+    handlebars: &mut Handlebars,
+    flows_to: &FlowsTo<'a>,
+    map: &mut HashMap<String, String>,
+) -> Result<()> {
+    handlebars
+        .register_template_file(FLOWS_TO_TEMPLATE, "templates/flows-to.txt")
+        .expect("Could not register flows to template with handlebars");
 
-    let src_marker = f.src.marker;
-    let src_func_call = func_call(&f.src.quantifier);
-    let dest_marker = f.dest.marker;
-    let dest_func_call = func_call(&f.dest.quantifier);
-
-    let dest_logic = format!("{dest_marker}_nodes.{dest_func_call}(|{dest_marker}| ctx.flows_to({src_marker}, {dest_marker}, EdgeType::Data))))");
-    let src_logic = format!("{src_marker}_nodes.{src_func_call}(|{src_marker}| {dest_logic}");
-
-    let policy = format!(
-        "{boilerplate}\npolicy!(pol, ctx {{
-            let mut {src_marker}_nodes = ctx.marked_nodes(marker!({src_marker}));
-            let mut {dest_marker}_nodes = ctx.marked_nodes(marker!({dest_marker}));
-            assert_error!(ctx, {src_logic};
-            Ok(())
-        }});",
+    map.insert("src_marker".to_string(), flows_to.src.marker.to_string());
+    map.insert("dest_marker".to_string(), flows_to.dest.marker.to_string());
+    map.insert(
+        "src_func_call".to_string(),
+        func_call(&flows_to.src.quantifier).to_string(),
+    );
+    map.insert(
+        "dest_func_call".to_string(),
+        func_call(&flows_to.dest.quantifier).to_string(),
     );
 
-    fs::write("compiled-policy.rs", policy)?;
+    let policy = handlebars
+        .render(FLOWS_TO_TEMPLATE, &map)
+        .expect("Could not render flows to handlebars template");
+
+    map.insert("policy".to_string(), policy);
+
+    let res = handlebars
+        .render(BASE_TEMPLATE, &map)
+        .expect("Could not render flows to handlebars template");
+
+    fs::write("compiled-policy.rs", &res)?;
     Ok(())
 }
 
-pub fn compile<'a>(f: &FlowsTo<'a>) -> Result<()> {
-    compile_flows_to(f)
+pub fn compile<'a>(flows_to: &FlowsTo<'a>, map: &mut HashMap<String, String>) -> Result<()> {
+    let mut handlebars = Handlebars::new();
+
+    handlebars.register_escape_fn(no_escape);
+
+    handlebars
+        .register_template_file(BASE_TEMPLATE, "templates/base.txt")
+        .expect("Could not register base template with handlebars");
+
+    compile_flows_to(&mut handlebars, flows_to, map)
 }

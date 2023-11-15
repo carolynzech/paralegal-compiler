@@ -1,16 +1,14 @@
 use anyhow::Result;
 use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, EdgeType, Marker, Node};
 use std::sync::Arc;
-
 pub mod program;
-
 macro_rules! marker {
-    ($name:ident) => {{
+    ($name:ident) => ({
         lazy_static::lazy_static! {
             static ref MARKER: Marker = Identifier::new_intern(stringify!($name));
         }
         *MARKER
-    }};
+    });
 }
 
 macro_rules! policy {
@@ -38,6 +36,15 @@ impl ContextExt for Context {
     }
 }
 
+
+
+policy!(pol, ctx {
+        let mut a_nodes = ctx.marked_nodes(marker!(a));
+let mut b_nodes = ctx.marked_nodes(marker!(b));
+assert_error!(ctx, a_nodes.any(|a| b_nodes.any(|b| ctx.flows_to(a, b, EdgeType::Data))));
+Ok(()) 
+    });
+
 fn main() -> Result<()> {
     let dir = ".";
     let cmd = paralegal_policy::SPDGGenCommand::global();
@@ -45,10 +52,3 @@ fn main() -> Result<()> {
     println!("Policy successful");
     Ok(())
 }
-
-policy!(pol, ctx {
-    let mut a_nodes = ctx.marked_nodes(marker!(a));
-    let mut b_nodes = ctx.marked_nodes(marker!(b));
-    assert_error!(ctx, a_nodes.any(|a| b_nodes.any(|b| ctx.flows_to(a, b, EdgeType::Data))));
-    Ok(())
-});
