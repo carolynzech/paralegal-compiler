@@ -1,1 +1,1 @@
-some a flows to some b
+a flows to b
