@@ -1,1 +1,1 @@
-some a has control flow influence on some b
+a has control flow influence on b

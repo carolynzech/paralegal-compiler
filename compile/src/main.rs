@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 
 use compile::compile;
-use compile::parse;
+use compile::parsers::parse;
 use std::collections::HashMap;
 use std::io::Result;
 
@@ -11,9 +11,7 @@ fn run(args: &Vec<String>) -> Result<()> {
         panic!("Need to pass path to policy file");
     }
     let policy_file = &args[1];
-    let policy = fs::read_to_string(policy_file)
-        .expect("Could not read policy file")
-        .replace(" ", "");
+    let policy = fs::read_to_string(policy_file).expect("Could not read policy file");
 
     let res = parse(&policy);
 

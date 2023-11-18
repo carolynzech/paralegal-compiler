@@ -1,5 +1,4 @@
 use handlebars::{no_escape, Handlebars};
-use parsers::{dispatch, Res};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Result;
@@ -16,6 +15,7 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
     (Paralegal Functionality)
     -
     (Good Practice / User Experience / Nits)
+    - deal with spaces properly
     - better error handling
     - pass template file paths as arguments instead of string literals
     - escaping {{}} in Rust code w/o overwriting no-escape for HTML characters
@@ -39,8 +39,8 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
 //         }
 //     }
 // }
-#[derive(Debug)]
-struct ASTVariable<'a> {
+#[derive(Debug, PartialEq, Eq)]
+struct Variable<'a> {
     name: &'a str,
 }
 // #[derive(Deserialize)]
@@ -51,8 +51,8 @@ struct ASTVariable<'a> {
 // }
 #[derive(Debug)]
 pub struct TwoVarObligation<'a> {
-    src: ASTVariable<'a>,
-    dest: ASTVariable<'a>,
+    src: Variable<'a>,
+    dest: Variable<'a>,
 }
 #[derive(Debug)]
 pub enum Influence<'a> {
@@ -77,16 +77,10 @@ fn func_call(q: &str) -> &str {
     }
 }
 
-pub fn parse<'a>(s: &'a str) -> Res<&str, Influence<'a>> {
-    let res = dispatch(&s)?;
-    dbg!(&res);
-    Ok(res)
-}
-
 fn get_variable_decs(p: &str) -> Table {
     let variables = fs::read_to_string(p).expect("Could not read variables file");
     let tab: Table = variables.parse::<Table>().unwrap();
-    dbg!(&tab);
+    // dbg!(&tab);
     tab
 }
 
