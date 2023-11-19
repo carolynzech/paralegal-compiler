@@ -1,0 +1,9 @@
+let delete_check = some "instance_delete_check"
+let ban_check = some "instance_ban_check"
+let write = all "db_write"
+let read = all "db_read"
+
+delete_check has control flow influence on write and 
+ban_check has control flow influence on write and 
+delete_check has control flow influence on read and 
+ban_check has control flow influence on read 

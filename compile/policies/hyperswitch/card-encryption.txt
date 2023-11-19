@@ -1,0 +1,5 @@
+let card = all "credit_card"
+let encrypt = some "hashed"
+let store = some "store"
+
+card flows to store through encrypt

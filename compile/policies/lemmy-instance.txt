@@ -1,5 +1,0 @@
-If community_struct flows to write,
-then community_struct flows to delete_check and 
-community_struct flows to ban_check and
-delete_check has control flow influence on write and
-ban_check has control flow influence on write

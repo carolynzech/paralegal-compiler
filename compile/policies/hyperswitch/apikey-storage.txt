@@ -1,0 +1,6 @@
+let apikey = all "apikey"
+let hash = some "hashed"
+let response = some "apikey_response"
+let expose = some "externalize"
+
+apikey flows to expose through hash or apikey flows to expose through apikey_response

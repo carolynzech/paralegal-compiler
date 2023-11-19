@@ -1,0 +1,10 @@
+some commit, some store, some some_new_resource |
+    flows_to(commit, store) && flows_to(commit, some_new_resource) => {
+        some auth_check | {
+            flows_to(commit, auth_check) &&
+            all new_resource_2 {
+                !flows_to(new_resource_2, auth_check)
+            }
+            
+        }
+    }
