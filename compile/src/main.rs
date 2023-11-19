@@ -15,18 +15,18 @@ fn run(args: &Vec<String>) -> Result<()> {
 
     let res = parse(&policy);
 
-    let mut map: HashMap<String, String> = HashMap::new();
+    // let mut map: HashMap<String, String> = HashMap::new();
 
-    match res {
-        Ok((remainder, parsed)) => {
-            if !remainder.is_empty() {
-                panic!("failed to parse entire policy");
-            } else {
-                compile(&parsed, &mut map)?;
-            }
-        }
-        Err(e) => panic!("{}", e),
-    };
+    // match res {
+    //     Ok((remainder, parsed)) => {
+    //         if !remainder.is_empty() {
+    //             panic!("failed to parse entire policy");
+    //         } else {
+    //             compile(&parsed, &mut map)?;
+    //         }
+    //     }
+    //     Err(e) => panic!("{}", e),
+    // };
     Ok(())
 }
 

@@ -43,21 +43,40 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
 struct Variable<'a> {
     name: &'a str,
 }
-// #[derive(Deserialize)]
-// struct Variable<'a> {
-//     name: &'a str, // todo: change to ASTVariable?
-//     quantifier: &'a str,
-//     marker: &'a str,
-// }
-#[derive(Debug)]
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct TwoVarObligation<'a> {
     src: Variable<'a>,
     dest: Variable<'a>,
 }
-#[derive(Debug)]
-pub enum Influence<'a> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum Conjunction {
+    And,
+    Or,
+}
+
+impl From<&str> for Conjunction {
+    fn from(s: &str) -> Self {
+        match s {
+            "and" => Conjunction::And,
+            "or" => Conjunction::Or,
+            &_ => unimplemented!("no other conjunctions supported"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ConjunctionData<'a> {
+    typ: Conjunction,
+    src: ASTNode<'a>,
+    dest: ASTNode<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ASTNode<'a> {
     FlowsTo(TwoVarObligation<'a>),
     ControlFlow(TwoVarObligation<'a>),
+    Conjunction(Box<ConjunctionData<'a>>),
 }
 
 // fn func_call(q: &Quantifier) -> &str {
@@ -106,13 +125,14 @@ fn extract_marker<'a>(variable_table: &'a Table, var_name: &'a str) -> &'a str {
 
 fn fill_in_template<'a>(
     handlebars: &mut Handlebars,
-    ob: &Influence<'a>,
+    ob: &ASTNode<'a>,
     map: &mut HashMap<String, String>,
     variable_table: Table,
 ) -> Result<()> {
     let (obligation, template) = match ob {
-        Influence::FlowsTo(o) => (o, FLOWS_TO_TEMPLATE),
-        Influence::ControlFlow(o) => (o, CONTROL_FLOW_TEMPLATE),
+        ASTNode::FlowsTo(o) => (o, FLOWS_TO_TEMPLATE),
+        ASTNode::ControlFlow(o) => (o, CONTROL_FLOW_TEMPLATE),
+        _ => todo!(),
     };
 
     let template_path = match template {
@@ -156,7 +176,7 @@ fn fill_in_template<'a>(
     Ok(())
 }
 
-pub fn compile<'a>(obligation: &Influence<'a>, map: &mut HashMap<String, String>) -> Result<()> {
+pub fn compile<'a>(obligation: &ASTNode<'a>, map: &mut HashMap<String, String>) -> Result<()> {
     let mut handlebars = Handlebars::new();
 
     handlebars.register_escape_fn(no_escape);
