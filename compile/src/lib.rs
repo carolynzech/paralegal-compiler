@@ -22,24 +22,24 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
     - cargo new for the policy and write a template a Cargo.toml for it as well
 */
 
-// #[derive(Debug)]
-// enum Quantifier {
-//     Some,
-//     All,
-//     No,
-// }
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Quantifier {
+    Some,
+    All,
+    No,
+}
 
-// impl From<&str> for Quantifier {
-//     fn from(s: &str) -> Self {
-//         match s {
-//             "some" => Quantifier::Some,
-//             "all" => Quantifier::All,
-//             "no" => Quantifier::No,
-//             &_ => unimplemented!("no other quantifiers supported"),
-//         }
-//     }
-// }
-#[derive(Debug, PartialEq, Eq)]
+impl From<&str> for Quantifier {
+    fn from(s: &str) -> Self {
+        match s {
+            "some" => Quantifier::Some,
+            "all" => Quantifier::All,
+            // "no" => Quantifier::No,
+            &_ => unimplemented!("no other quantifiers supported"),
+        }
+    }
+}
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct Variable<'a> {
     name: &'a str,
 }
@@ -79,20 +79,18 @@ pub enum ASTNode<'a> {
     Conjunction(Box<ConjunctionData<'a>>),
 }
 
-// fn func_call(q: &Quantifier) -> &str {
-//     match q {
-//         Quantifier::Some => "any",
-//         Quantifier::All => "all",
-//         Quantifier::No => todo!(),
-//     }
-// }
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct VariableBinding<'a> {
+    variable: Variable<'a>,
+    quantifier: Quantifier,
+    marker: &'a str,
+}
 
-fn func_call(q: &str) -> &str {
+fn func_call(q: &Quantifier) -> &str {
     match q {
-        "some" => "any",
-        "all" => "all",
-        "no" => todo!(),
-        &_ => unimplemented!(),
+        Quantifier::Some => "any",
+        Quantifier::All => "all",
+        Quantifier::No => todo!(),
     }
 }
 
@@ -141,38 +139,38 @@ fn fill_in_template<'a>(
         &_ => panic!("should not reach this case"),
     };
 
-    handlebars
-        .register_template_file(template, template_path)
-        .expect("Could not register flows to template with handlebars");
+    // handlebars
+    //     .register_template_file(template, template_path)
+    //     .expect("Could not register flows to template with handlebars");
 
-    let src_marker = extract_marker(&variable_table, obligation.src.name);
-    let dest_marker = extract_marker(&variable_table, obligation.dest.name);
-    let src_quantifier = extract_quantifier(&variable_table, obligation.src.name);
-    let dest_quantifier = extract_quantifier(&variable_table, obligation.dest.name);
+    // let src_marker = extract_marker(&variable_table, obligation.src.name);
+    // let dest_marker = extract_marker(&variable_table, obligation.dest.name);
+    // let src_quantifier = extract_quantifier(&variable_table, obligation.src.name);
+    // let dest_quantifier = extract_quantifier(&variable_table, obligation.dest.name);
 
-    map.insert("src_marker".to_string(), src_marker.to_string());
-    map.insert("dest_marker".to_string(), dest_marker.to_string());
+    // map.insert("src_marker".to_string(), src_marker.to_string());
+    // map.insert("dest_marker".to_string(), dest_marker.to_string());
 
-    map.insert(
-        "src_func_call".to_string(),
-        func_call(&src_quantifier).to_string(),
-    );
-    map.insert(
-        "dest_func_call".to_string(),
-        func_call(&dest_quantifier).to_string(),
-    );
+    // map.insert(
+    //     "src_func_call".to_string(),
+    //     func_call(&src_quantifier).to_string(),
+    // );
+    // map.insert(
+    //     "dest_func_call".to_string(),
+    //     func_call(&dest_quantifier).to_string(),
+    // );
 
-    let policy = handlebars
-        .render(template, &map)
-        .expect("Could not render flows to handlebars template");
+    // let policy = handlebars
+    //     .render(template, &map)
+    //     .expect("Could not render flows to handlebars template");
 
-    map.insert("policy".to_string(), policy);
+    // map.insert("policy".to_string(), policy);
 
-    let res = handlebars
-        .render(BASE_TEMPLATE, &map)
-        .expect("Could not render flows to handlebars template");
+    // let res = handlebars
+    //     .render(BASE_TEMPLATE, &map)
+    //     .expect("Could not render flows to handlebars template");
 
-    fs::write("compiled-policy.rs", &res)?;
+    // fs::write("compiled-policy.rs", &res)?;
     Ok(())
 }
 

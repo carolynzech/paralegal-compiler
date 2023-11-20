@@ -1,0 +1,3 @@
+let commit = some "commit"
+let store = some "sink"
+let auth_check = all "check_rights"

@@ -14,6 +14,7 @@ fn run(args: &Vec<String>) -> Result<()> {
     let policy = fs::read_to_string(policy_file).expect("Could not read policy file");
 
     let res = parse(&policy);
+    // dbg!(&res);
 
     // let mut map: HashMap<String, String> = HashMap::new();
 
