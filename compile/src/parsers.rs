@@ -18,12 +18,13 @@ static CONTROL_FLOW_TAG: &str = "has control flow influence on";
 
 // TODO: may want to make this more specific -- kind of weird to allow two commas, random newlines, etc.,
 // also certain punctuation should only be allowed in certain places (e.g., periods)
-// TODO: this should match on multiple punctuation marks,
-// but eof has infinite loop problems w/ anything repeating (e.g., many1)
 fn is_nonalphabetic(s: &str) -> Res<&str, &str> {
     let (remainder, res) = context(
         "is nonalphabetic",
-        alt((eof, tag("."), tag(","), tag(" "), tag("\n"))),
+        alt((
+            eof,
+            recognize(many1(alt((tag("."), tag(","), tag(" "), tag("\n"))))),
+        )),
     )(s)?;
     Ok((remainder, res))
 }
@@ -319,15 +320,14 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let single_w_spaces = "let sens = all \"sensitive\"\n";
+        let single_w_spaces = "let sens    = all \"sensitive\"   \n";
         let single_ans = vec![VariableBinding {
             variable: Variable { name: "sens" },
             quantifier: Quantifier::All,
             marker: "sensitive",
         }];
         let multi_newline = "let commit = some \"commit\"\nlet store = some \"sink\"\nlet auth_check = all \"check_rights\"\n";
-        // this will work once multiple punctuation works
-        //let multi_comma = "let commit = some \"commit\", let store = some \"sink\", let auth_check = all \"check_rights\"\n";
+        let multi_comma = "let commit = some \"commit\", let store = some \"sink\", let auth_check = all \"check_rights\"\n";
         let multi_ans = vec![
             VariableBinding {
                 variable: Variable { name: "commit" },
@@ -350,7 +350,7 @@ mod tests {
 
         assert!(bindings(single_w_spaces) == Ok(("", single_ans)));
         assert!(bindings(multi_newline) == Ok(("", multi_ans.clone())));
-        // assert!(bindings(multi_comma) == Ok(("", multi_ans)));
+        assert!(bindings(multi_comma) == Ok(("", multi_ans)));
         assert!(bindings(not_separated).is_err());
     }
 }
