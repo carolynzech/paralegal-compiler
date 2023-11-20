@@ -105,7 +105,7 @@ fn marker<'a>(s: &'a str) -> Res<&str, &'a str> {
 fn variable<'a>(s: &'a str) -> Res<&str, Variable<'a>> {
     let (remainder, res) = context(
         "variable",
-        terminated(alphabetic_w_underscores, opt(is_nonalphabetic)),
+        terminated(alphabetic_w_underscores, is_nonalphabetic),
     )(s)?;
     Ok((remainder, Variable { name: res }))
 }
