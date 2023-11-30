@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::char,
-    combinator::{all_consuming, eof, map, not, opt, recognize},
+    combinator::{all_consuming, eof, map, opt, recognize},
     error::{context, VerboseError},
     multi::{many0, many1},
     sequence::{delimited, pair, preceded, terminated, tuple},
@@ -61,14 +61,14 @@ fn equal(s: &str) -> Res<&str, &str> {
 
 fn some(s: &str) -> Res<&str, Quantifier> {
     let mut combinator = context("some", terminated(tag("some"), is_nonalphabetic));
-    let (remainder, res) = combinator(s)?;
+    let (remainder, _) = combinator(s)?;
 
     Ok((remainder, Quantifier::Some))
 }
 
 fn all(s: &str) -> Res<&str, Quantifier> {
     let mut combinator = context("all", terminated(tag("all"), is_nonalphabetic));
-    let (remainder, res) = combinator(s)?;
+    let (remainder, _) = combinator(s)?;
 
     Ok((remainder, Quantifier::All))
 }
@@ -154,10 +154,10 @@ fn conjunction_expr<'a>(s: &'a str) -> Res<&str, (&'a str, ASTNode<'a>)> {
 }
 
 // parse policy body: "<expr> and/or <expr> and/or <expr> ..."
-fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "parse body",
-        map(
+        all_consuming(map(
             pair(expr, many0(conjunction_expr)),
             |(first_expr, conj_expr_vec)| {
                 conj_expr_vec
@@ -170,7 +170,7 @@ fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
                         }))
                     })
             },
-        ),
+        )),
     )(s)
 }
 
@@ -196,18 +196,9 @@ fn single_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
 }
 
 // parse let bindings
-fn bindings<'a>(s: &'a str) -> Res<&str, Vec<VariableBinding<'a>>> {
+pub fn parse_bindings<'a>(s: &'a str) -> Res<&str, Vec<VariableBinding<'a>>> {
     let (remainder, res) = context("parse bindings", many1(single_binding))(s)?;
     Ok((remainder, res))
-}
-
-pub fn parse<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let (remainder, bindings) = bindings(s)?;
-    dbg!(&bindings);
-    // TODO construct environment from bindings
-    let ast = all_consuming(body)(s)?;
-    // dbg!(&ast);
-    Ok(ast)
 }
 
 #[cfg(test)]
@@ -270,15 +261,14 @@ mod tests {
             }),
         }));
 
-        // TODO move these to parse() tests
-        // let err1 = "a flows to b or";
-        // let err2 = "a flows to b or b flows to";
+        let err1 = "a flows to b or";
+        let err2 = "a flows to b or b flows to";
 
-        assert!(body(policy1) == Ok(("", policy1_ans)));
-        assert!(body(policy2) == Ok(("", policy2_ans)));
-        assert!(body(policy3) == Ok(("", policy3_ans)));
-        // assert!(parse_body(err1).is_err());
-        // assert!(parse_body(err2).is_err());
+        assert!(parse_body(policy1) == Ok(("", policy1_ans)));
+        assert!(parse_body(policy2) == Ok(("", policy2_ans)));
+        assert!(parse_body(policy3) == Ok(("", policy3_ans)));
+        assert!(parse_body(err1).is_err());
+        assert!(parse_body(err2).is_err());
     }
 
     #[test]
@@ -314,8 +304,8 @@ mod tests {
 
         assert!(single_binding(binding1) == Ok(("", binding1_ans)));
         assert!(single_binding(binding2) == Ok(("", binding2_ans)));
-        assert!(body(var_in_quotes).is_err());
-        assert!(body(wrong_quantifier).is_err());
+        assert!(single_binding(var_in_quotes).is_err());
+        assert!(single_binding(wrong_quantifier).is_err());
     }
 
     #[test]
@@ -348,9 +338,9 @@ mod tests {
 
         let not_separated = "let commit = some \"commit\"let store = some \"sink\"";
 
-        assert!(bindings(single_w_spaces) == Ok(("", single_ans)));
-        assert!(bindings(multi_newline) == Ok(("", multi_ans.clone())));
-        assert!(bindings(multi_comma) == Ok(("", multi_ans)));
-        assert!(bindings(not_separated).is_err());
+        assert!(parse_bindings(single_w_spaces) == Ok(("", single_ans)));
+        assert!(parse_bindings(multi_newline) == Ok(("", multi_ans.clone())));
+        assert!(parse_bindings(multi_comma) == Ok(("", multi_ans)));
+        assert!(parse_bindings(not_separated).is_err());
     }
 }

@@ -1,8 +1,8 @@
 let commit = some "commit"
 let store = some "sink"
-let some_new_resource = some "new_resource"
-let all_new_resource = all "new_resource"
+let new_resource = some "new_resource"
 let auth_check = some "check_rights"
 
-If commit flows to store and commit flows to some_new_resource,
-then commit flows to auth_check and all_new_resource does not flow to auth_check
+If commit flows to store,
+then commit flows to auth_check and new_resource does not flow to auth_check
+and auth_check has control flow influence on the store.

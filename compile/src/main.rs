@@ -1,8 +1,8 @@
 use std::env;
 use std::fs;
 
-use compile::compile;
-use compile::parsers::parse;
+use compile::parsers::{parse_bindings, parse_body};
+use compile::{compile, construct_env, Quantifier};
 use std::collections::HashMap;
 use std::io::Result;
 
@@ -13,21 +13,20 @@ fn run(args: &Vec<String>) -> Result<()> {
     let policy_file = &args[1];
     let policy = fs::read_to_string(policy_file).expect("Could not read policy file");
 
-    let res = parse(&policy);
-    // dbg!(&res);
+    let bindings_res = parse_bindings(&policy);
+    match bindings_res {
+        Ok((remainder, bindings)) => {
+            let mut env: HashMap<String, (Quantifier, String)> = HashMap::new();
+            construct_env(bindings, &mut env);
+            let body_res = parse_body(remainder);
+            match body_res {
+                Ok((_, policy_body)) => compile(policy_body, &env)?,
+                Err(e) => panic!("{}", e),
+            }
+        }
+        Err(e) => panic!("{}", e),
+    };
 
-    // let mut map: HashMap<String, String> = HashMap::new();
-
-    // match res {
-    //     Ok((remainder, parsed)) => {
-    //         if !remainder.is_empty() {
-    //             panic!("failed to parse entire policy");
-    //         } else {
-    //             compile(&parsed, &mut map)?;
-    //         }
-    //     }
-    //     Err(e) => panic!("{}", e),
-    // };
     Ok(())
 }
 

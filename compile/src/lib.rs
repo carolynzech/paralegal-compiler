@@ -2,7 +2,6 @@ use handlebars::{no_escape, Handlebars};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Result;
-use toml::Table;
 
 pub mod parsers;
 
@@ -12,10 +11,12 @@ const FLOWS_TO_TEMPLATE: &str = "flows-to";
 const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
 
 /* TODOs
-    (Paralegal Functionality)
-    -
+    (Functionality)
+    - For "a flows to b", instead of getting every node marked b, then filtering
+      for the ones that a flows to, call influencees to start from what a flows to
+      and filter to the ones marked b.
+
     (Good Practice / User Experience / Nits)
-    - deal with spaces properly
     - better error handling
     - pass template file paths as arguments instead of string literals
     - escaping {{}} in Rust code w/o overwriting no-escape for HTML characters
@@ -39,7 +40,7 @@ impl From<&str> for Quantifier {
         }
     }
 }
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 struct Variable<'a> {
     name: &'a str,
 }
@@ -94,40 +95,35 @@ fn func_call(q: &Quantifier) -> &str {
     }
 }
 
-fn get_variable_decs(p: &str) -> Table {
-    let variables = fs::read_to_string(p).expect("Could not read variables file");
-    let tab: Table = variables.parse::<Table>().unwrap();
-    // dbg!(&tab);
-    tab
-}
-
-fn extract_quantifier<'a>(variable_table: &'a Table, var_name: &'a str) -> &'a str {
-    match variable_table.get(var_name) {
-        Some(table) => match table.get("quantifier") {
-            Some(ans) => ans.as_str().unwrap().into(),
-            None => panic!("toml parsing inner table failed"),
-        },
-        None => panic!("toml parsing outer table failed"),
+// TODO: wonder if there's a better way to fix the Variable/VariableBinding structs lifetime issue than just making everything Strings
+// it'd be nice to let the Variable itself be the key, but it doesn't really matter
+pub fn construct_env(
+    bindings: Vec<VariableBinding>,
+    env: &mut HashMap<String, (Quantifier, String)>,
+) {
+    for binding in bindings {
+        let key = String::from(binding.variable.name);
+        let val = (binding.quantifier, String::from(binding.marker));
+        if env.contains_key(&key) {
+            panic!("Policy contains duplicate variable binding {}", key);
+        }
+        env.insert(key, val);
     }
 }
 
-fn extract_marker<'a>(variable_table: &'a Table, var_name: &'a str) -> &'a str {
-    match variable_table.get(var_name) {
-        Some(table) => match table.get("marker") {
-            Some(ans) => ans.as_str().unwrap(),
-            None => panic!("toml parsing inner table failed"),
-        },
-        None => panic!("toml parsing outer table failed"),
-    }
-}
+/*
+Traverse the tree in-order
+When node is a FlowsTo or ControlFlow, base case: find template, fill it in
+Otherwise,
 
-fn fill_in_template<'a>(
+*/
+
+fn compile_policy<'a>(
     handlebars: &mut Handlebars,
-    ob: &ASTNode<'a>,
-    map: &mut HashMap<String, String>,
-    variable_table: Table,
+    policy_body: ASTNode<'a>,
+    env: &HashMap<String, (Quantifier, String)>,
 ) -> Result<()> {
-    let (obligation, template) = match ob {
+    let (obligation, template) = match policy_body {
         ASTNode::FlowsTo(o) => (o, FLOWS_TO_TEMPLATE),
         ASTNode::ControlFlow(o) => (o, CONTROL_FLOW_TEMPLATE),
         _ => todo!(),
@@ -139,42 +135,48 @@ fn fill_in_template<'a>(
         &_ => panic!("should not reach this case"),
     };
 
-    // handlebars
-    //     .register_template_file(template, template_path)
-    //     .expect("Could not register flows to template with handlebars");
+    handlebars
+        .register_template_file(template, template_path)
+        .expect("Could not register flows to template with handlebars");
 
-    // let src_marker = extract_marker(&variable_table, obligation.src.name);
-    // let dest_marker = extract_marker(&variable_table, obligation.dest.name);
-    // let src_quantifier = extract_quantifier(&variable_table, obligation.src.name);
-    // let dest_quantifier = extract_quantifier(&variable_table, obligation.dest.name);
+    let src_var = obligation.src.name;
+    let dest_var = obligation.dest.name;
+    let (src_quantifier, src_marker) = env.get(src_var).unwrap();
+    let (dest_quantifier, dest_marker) = env.get(dest_var).unwrap();
 
-    // map.insert("src_marker".to_string(), src_marker.to_string());
-    // map.insert("dest_marker".to_string(), dest_marker.to_string());
+    /*
+    TODO
+    templates should be broken up: there should be flows-to logic that just has the flows-to call,
+    then some kind of flows_to prefix that inserts var_nodes.func_call(|var|) before the logic for src and dest
+    insert the prefix for src and dest iff it's the first reference to them in the policy body
+    */
 
-    // map.insert(
-    //     "src_func_call".to_string(),
-    //     func_call(&src_quantifier).to_string(),
-    // );
-    // map.insert(
-    //     "dest_func_call".to_string(),
-    //     func_call(&dest_quantifier).to_string(),
-    // );
+    let mut template_map: HashMap<&str, &str> = HashMap::new();
+    template_map.insert("src_var", src_var);
+    template_map.insert("dest_var", dest_var);
+    template_map.insert("src_marker", src_marker);
+    template_map.insert("dest_marker", dest_marker);
+    template_map.insert("src_func_call", func_call(&src_quantifier));
+    template_map.insert("dest_func_call", func_call(&dest_quantifier));
 
-    // let policy = handlebars
-    //     .render(template, &map)
-    //     .expect("Could not render flows to handlebars template");
+    let policy = handlebars
+        .render(template, &template_map)
+        .expect("Could not render flows to handlebars template");
 
-    // map.insert("policy".to_string(), policy);
+    template_map.insert("policy", &policy);
 
-    // let res = handlebars
-    //     .render(BASE_TEMPLATE, &map)
-    //     .expect("Could not render flows to handlebars template");
+    let res = handlebars
+        .render(BASE_TEMPLATE, &template_map)
+        .expect("Could not render flows to handlebars template");
 
-    // fs::write("compiled-policy.rs", &res)?;
+    fs::write("compiled-policy.rs", &res)?;
     Ok(())
 }
 
-pub fn compile<'a>(obligation: &ASTNode<'a>, map: &mut HashMap<String, String>) -> Result<()> {
+pub fn compile<'a>(
+    policy_body: ASTNode<'a>,
+    env: &HashMap<String, (Quantifier, String)>,
+) -> Result<()> {
     let mut handlebars = Handlebars::new();
 
     handlebars.register_escape_fn(no_escape);
@@ -183,6 +185,5 @@ pub fn compile<'a>(obligation: &ASTNode<'a>, map: &mut HashMap<String, String>) 
         .register_template_file(BASE_TEMPLATE, "templates/base.txt")
         .expect("Could not register base template with handlebars");
 
-    let variable_table: Table = get_variable_decs("variables/flows-to.toml");
-    fill_in_template(&mut handlebars, obligation, map, variable_table)
+    compile_policy(&mut handlebars, policy_body, env)
 }

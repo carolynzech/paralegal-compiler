@@ -1,0 +1,13 @@
+baseline:
+for all types that are sensitive that flow to a store, there needs to be one deleter (like a GDPRdeleter) that those types flow into.
+
+library:
+the number of sensitive nodes (forms) that flow to stores must be leq the number of nodes that are marked "from storage" 
+(we got from the database) that flow to deletes. Need to at minimum delete all sensitive data, can delete other stuff too.
+deletion needs to happen in a single controller.
+
+strict:
+for all types that are sensitive that flow to a store, there needs to be one deleter (like a GDPRdeleter) that those types flow into,
+and there must be an auth_witness that flows into a possible retriever. 
+A possible retriever has no incoming control flow edges (must happen unconditionally), and for all types, a possible retriever will flow to
+a delete function without skipping. Without skipping means that every intermediate call site is only allowed to be an into_iter or a next.

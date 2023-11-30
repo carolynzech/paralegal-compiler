@@ -1,0 +1,12 @@
+baseline:
+For all sensitives that flow to a sink, the sink will have an associated call site where all scopes that flow to that call site,
+"roots" of the program (things w/o incoming data flow edges) must flow to scopes through safe_scopes.
+safe_scopes are things that are marked safe by safe directly or the safe_source_with_bless thing.
+
+library:
+For all sensitives that flows to store. If store is a call site, we keep track of the scopes that flow into it, or it's the return
+of the controller, in which case the scopes are anything marked request_generated. Then same always happens before policy. 
+safe_scopes is anything marked safe_source, request_generated, server_state, from_storage.
+
+strict:
+same as baseline

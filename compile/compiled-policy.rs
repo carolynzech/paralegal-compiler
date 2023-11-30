@@ -21,7 +21,6 @@ macro_rules! policy {
 
 trait ContextExt {
     fn marked_nodes<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = Node<'a>> + 'a>;
-    fn has_control_flow_influence(&self, influencer: Node, target: Node) -> bool;
 }
 
 impl ContextExt for Context {
@@ -35,26 +34,14 @@ impl ContextExt for Context {
                 .filter(move |node| self.has_marker(marker, *node)),
         )
     }
-
-    fn has_control_flow_influence(&self, influencer: Node, target: Node) -> bool {
-        let Some(tcs) = target.associated_call_site() else {
-            self.error(format!("{target:?} cannot be influenced by control flow"));
-            return false;
-        };
-
-        self.flows_to(influencer, tcs, EdgeType::Control)
-            || self
-                .influencees(influencer, EdgeType::Data)
-                .any(|inf| self.flows_to(inf, tcs, EdgeType::Control))
-    }
 }
 
-policy!(pol, ctx {
-        let mut a_nodes = ctx.marked_nodes(marker!(a));
-let mut b_nodes = ctx.marked_nodes(marker!(b));
-assert_error!(ctx, a_nodes.any(|a| b_nodes.any(|b| ctx.flows_to(a, b, EdgeType::Data))));
-Ok(()) 
-    });
+policy!(pol, ctx { 
+    let mut sensitive_nodes = ctx.marked_nodes(marker!(private_key));
+    let mut encrypts_nodes = ctx.marked_nodes(marker!(encrypt_func));
+    assert_error!(ctx, sensitive_nodes.any(|sensitive| encrypts_nodes.any(|encrypts| ctx.flows_to(sensitive, encrypts, EdgeType::Data))));
+    Ok(()) 
+});
 
 fn main() -> Result<()> {
     let dir = ".";

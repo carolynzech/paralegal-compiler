@@ -1,0 +1,10 @@
+baseline:
+For all sensitives that flow to store, the store must have an associated call site such that a scope flows to it and
+an auth_witness flows to it.
+
+library:
+For all sensitives that flow to store, the store must have an associated call site such that a scope flows to it and
+an request_generated flows to it.
+
+strict:
+same as baseline.

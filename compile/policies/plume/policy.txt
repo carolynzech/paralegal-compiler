@@ -1,4 +1,4 @@
-let user_data = all user_data
-let deletes = some deletes
+let user_data = all "user_data"
+let deletes = some "to_deletes"
 
 user_data flows to deletes
