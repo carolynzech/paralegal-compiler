@@ -23,6 +23,7 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
     - pass template file paths as arguments instead of string literals
     - escaping {{}} in Rust code w/o overwriting no-escape for HTML characters
     - cargo new for the policy and write a template a Cargo.toml for it as well
+    - better separate concerns in this repository (break up parsers into multiple files, etc.)
 */
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -82,9 +83,16 @@ pub struct ConditionalData<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct ThroughData<'a> {
+    flows_to: ASTNode<'a>,
+    var: Variable<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode<'a> {
     FlowsTo(TwoVarObligation<'a>),
     ControlFlow(TwoVarObligation<'a>),
+    Through(Box<ThroughData<'a>>),
     Conjunction(Box<ConjunctionData<'a>>),
     Conditional(Box<ConditionalData<'a>>),
 }

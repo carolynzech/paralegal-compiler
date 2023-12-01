@@ -2,15 +2,15 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::char,
-    combinator::{all_consuming, eof, map, opt, recognize},
+    combinator::{all_consuming, eof, map, not, opt, recognize},
     error::{context, VerboseError},
     multi::{many0, many1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
 
 use crate::{
-    ASTNode, ConditionalData, ConjunctionData, Quantifier, TwoVarObligation, Variable,
+    ASTNode, ConditionalData, ConjunctionData, Quantifier, ThroughData, TwoVarObligation, Variable,
     VariableBinding,
 };
 
@@ -32,18 +32,19 @@ fn is_nonalphabetic(s: &str) -> Res<&str, &str> {
     Ok((remainder, res))
 }
 
-fn flows_to_phrase(s: &str) -> Res<&str, &str> {
+fn flows_to(s: &str) -> Res<&str, &str> {
+    context("flows to", terminated(tag(FLOWS_TO_TAG), is_nonalphabetic))(s)
+}
+
+fn control_flow(s: &str) -> Res<&str, &str> {
     context(
-        "flows to phrase",
-        terminated(tag(FLOWS_TO_TAG), is_nonalphabetic),
+        "control flow",
+        terminated(tag(CONTROL_FLOW_TAG), is_nonalphabetic),
     )(s)
 }
 
-fn control_flow_phrase(s: &str) -> Res<&str, &str> {
-    context(
-        "control flow phrase",
-        terminated(tag(CONTROL_FLOW_TAG), is_nonalphabetic),
-    )(s)
+fn through(s: &str) -> Res<&str, &str> {
+    context("through", terminated(tag("through"), is_nonalphabetic))(s)
 }
 
 fn _if(s: &str) -> Res<&str, &str> {
@@ -121,11 +122,8 @@ fn variable<'a>(s: &'a str) -> Res<&str, Variable<'a>> {
     Ok((remainder, Variable { name: res }))
 }
 
-fn flows_to<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "flows to expr",
-        tuple((variable, flows_to_phrase, variable)),
-    );
+fn flows_to_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context("flows to expr", tuple((variable, flows_to, variable)));
     let (remainder, (var1, _, var2)) = combinator(s)?;
 
     Ok((
@@ -137,10 +135,31 @@ fn flows_to<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-fn control_flow<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn through_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "through expr",
+        separated_pair(flows_to_expr, through, variable),
+    );
+    let (remainder, (flows_to, var)) = combinator(s)?;
+
+    Ok((
+        remainder,
+        ASTNode::Through(Box::new(ThroughData { flows_to, var })),
+    ))
+}
+
+// first tries to parse through expressions, then regular flows to if through fails
+fn flows_to_or_through_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "flows to or through expr",
+        alt((through_expr, terminated(flows_to_expr, not(through)))),
+    )(s)
+}
+
+fn control_flow_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
         "control flow expr",
-        tuple((variable, control_flow_phrase, variable)),
+        tuple((variable, control_flow, variable)),
     );
     let (remainder, (var1, _, var2)) = combinator(s)?;
 
@@ -154,7 +173,10 @@ fn control_flow<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 }
 
 fn expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context("parse expr", alt((flows_to, control_flow)))(s)
+    context(
+        "parse expr",
+        alt((control_flow_expr, flows_to_or_through_expr)),
+    )(s)
 }
 
 // parse "and/or <expr>"
@@ -243,6 +265,23 @@ mod tests {
     // TODO: test other parsers
 
     #[test]
+    fn test_is_nonalphabetic() {
+        let spaces = "     ";
+        let comma = ",";
+        let period = ".";
+        let newline = "\n";
+        let punc = ",.\n";
+        let err = "this is alphabetical";
+
+        assert!(is_nonalphabetic(spaces) == Ok(("", spaces)));
+        assert!(is_nonalphabetic(comma) == Ok(("", comma)));
+        assert!(is_nonalphabetic(period) == Ok(("", period)));
+        assert!(is_nonalphabetic(newline) == Ok(("", newline)));
+        assert!(is_nonalphabetic(punc) == Ok(("", punc)));
+        assert!(is_nonalphabetic(err).is_err());
+    }
+
+    #[test]
     fn test_marker() {
         let a = "\"a\"";
         let b = "\"sensitive\"";
@@ -266,6 +305,40 @@ mod tests {
         assert!(variable(var2).is_ok());
         assert!(variable(wrong).is_err());
         assert!(variable(partially_keyword) == Ok(("flows to b", Variable { name: "a" })));
+    }
+
+    #[test]
+    fn test_expr() {
+        let through = "a flows to b through c";
+        let through_ans = ASTNode::Through(Box::new(ThroughData {
+            flows_to: ASTNode::FlowsTo(TwoVarObligation {
+                src: Variable { name: "a" },
+                dest: Variable { name: "b" },
+            }),
+            var: Variable { name: "c" },
+        }));
+
+        let flows_to = "a flows to b";
+        let flows_to_ans = ASTNode::FlowsTo(TwoVarObligation {
+            src: Variable { name: "a" },
+            dest: Variable { name: "b" },
+        });
+        let control_flow = "a has control flow influence on b";
+        let control_flow_ans = ASTNode::ControlFlow(TwoVarObligation {
+            src: Variable { name: "a" },
+            dest: Variable { name: "b" },
+        });
+
+        let err1 = "a flows to";
+        let err2 = "a flows to b through";
+        let err3 = "a has control flow influence on";
+
+        assert!(expr(through) == Ok(("", through_ans)));
+        assert!(expr(flows_to) == Ok(("", flows_to_ans)));
+        assert!(expr(control_flow) == Ok(("", control_flow_ans)));
+        assert!(expr(err1).is_err());
+        assert!(expr(err2).is_err());
+        assert!(expr(err3).is_err());
     }
 
     #[test]
