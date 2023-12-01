@@ -9,7 +9,10 @@ use nom::{
     IResult,
 };
 
-use crate::{ASTNode, ConjunctionData, Quantifier, TwoVarObligation, Variable, VariableBinding};
+use crate::{
+    ASTNode, ConditionalData, ConjunctionData, Quantifier, TwoVarObligation, Variable,
+    VariableBinding,
+};
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
 
@@ -41,6 +44,14 @@ fn control_flow_phrase(s: &str) -> Res<&str, &str> {
         "control flow phrase",
         terminated(tag(CONTROL_FLOW_TAG), is_nonalphabetic),
     )(s)
+}
+
+fn _if(s: &str) -> Res<&str, &str> {
+    context("if", terminated(tag("if"), is_nonalphabetic))(s)
+}
+
+fn then(s: &str) -> Res<&str, &str> {
+    context("then", terminated(tag("then"), is_nonalphabetic))(s)
 }
 
 fn and(s: &str) -> Res<&str, &str> {
@@ -153,11 +164,11 @@ fn conjunction_expr<'a>(s: &'a str) -> Res<&str, (&'a str, ASTNode<'a>)> {
     Ok((remainder, (conjunction, expr)))
 }
 
-// parse policy body: "<expr> and/or <expr> and/or <expr> ..."
-pub fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+// parse "<expr> and/or <expr> and/or <expr> ..."
+fn chained_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
-        "parse body",
-        all_consuming(map(
+        "parse chained expressions",
+        map(
             pair(expr, many0(conjunction_expr)),
             |(first_expr, conj_expr_vec)| {
                 conj_expr_vec
@@ -170,8 +181,31 @@ pub fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
                         }))
                     })
             },
-        )),
+        ),
     )(s)
+}
+
+fn conditional<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "parse conditionals",
+        tuple((preceded(_if, chained_exprs), preceded(then, chained_exprs))),
+    );
+    let (remainder, (premise, obligation)) = combinator(s)?;
+    Ok((
+        remainder,
+        ASTNode::Conditional(Box::new(ConditionalData {
+            premise,
+            obligation,
+        })),
+    ))
+}
+
+fn do_parse<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context("parse body helper", alt((conditional, chained_exprs)))(s)
+}
+
+pub fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context("parse body", all_consuming(do_parse))(s)
 }
 
 fn single_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
@@ -197,8 +231,7 @@ fn single_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
 
 // parse let bindings
 pub fn parse_bindings<'a>(s: &'a str) -> Res<&str, Vec<VariableBinding<'a>>> {
-    let (remainder, res) = context("parse bindings", many1(single_binding))(s)?;
-    Ok((remainder, res))
+    context("parse bindings", many1(single_binding))(s)
 }
 
 #[cfg(test)]
@@ -208,6 +241,19 @@ mod tests {
     use super::*;
 
     // TODO: test other parsers
+
+    #[test]
+    fn test_marker() {
+        let a = "\"a\"";
+        let b = "\"sensitive\"";
+        let err1 = "sensitive";
+        let err2 = "\"sensitive";
+
+        assert!(marker(a) == Ok(("", "a")));
+        assert!(marker(b) == Ok(("", "sensitive")));
+        assert!(marker(err1).is_err());
+        assert!(marker(err2).is_err());
+    }
 
     #[test]
     fn test_variable() {
@@ -223,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn test_body() {
+    fn test_chained_exprs() {
         let policy1 = "a flows to b";
         let policy1_ans = ASTNode::FlowsTo(TwoVarObligation {
             src: Variable { name: "a" },
@@ -261,27 +307,70 @@ mod tests {
             }),
         }));
 
-        let err1 = "a flows to b or";
-        let err2 = "a flows to b or b flows to";
+        let err1 = "a flows to";
 
-        assert!(parse_body(policy1) == Ok(("", policy1_ans)));
-        assert!(parse_body(policy2) == Ok(("", policy2_ans)));
-        assert!(parse_body(policy3) == Ok(("", policy3_ans)));
-        assert!(parse_body(err1).is_err());
-        assert!(parse_body(err2).is_err());
+        assert!(chained_exprs(policy1) == Ok(("", policy1_ans)));
+        assert!(chained_exprs(policy2) == Ok(("", policy2_ans)));
+        assert!(chained_exprs(policy3) == Ok(("", policy3_ans)));
+        assert!(chained_exprs(err1).is_err());
     }
 
     #[test]
-    fn test_marker() {
-        let a = "\"a\"";
-        let b = "\"sensitive\"";
-        let err1 = "sensitive";
-        let err2 = "\"sensitive";
+    fn test_conditional() {
+        let policy1 = "if a flows to b, then c flows to d";
+        let policy1_ans = ASTNode::Conditional(Box::new(ConditionalData {
+            premise: ASTNode::FlowsTo(TwoVarObligation {
+                src: Variable { name: "a" },
+                dest: Variable { name: "b" },
+            }),
+            obligation: ASTNode::FlowsTo(TwoVarObligation {
+                src: Variable { name: "c" },
+                dest: Variable { name: "d" },
+            }),
+        }));
+        let policy2 = "if a flows to b and b flows to c, then c has control flow influence on d";
+        let policy2_ans = ASTNode::Conditional(Box::new(ConditionalData {
+            premise: ASTNode::Conjunction(Box::new(ConjunctionData {
+                typ: Conjunction::And,
+                src: ASTNode::FlowsTo(TwoVarObligation {
+                    src: Variable { name: "a" },
+                    dest: Variable { name: "b" },
+                }),
+                dest: ASTNode::FlowsTo(TwoVarObligation {
+                    src: Variable { name: "b" },
+                    dest: Variable { name: "c" },
+                }),
+            })),
+            obligation: ASTNode::ControlFlow(TwoVarObligation {
+                src: Variable { name: "c" },
+                dest: Variable { name: "d" },
+            }),
+        }));
+        let err1 = "a flows to b";
+        let err2 = "if a flows to b";
+        let err3 = "a flows to b then";
 
-        assert!(marker(a) == Ok(("", "a")));
-        assert!(marker(b) == Ok(("", "sensitive")));
-        assert!(marker(err1).is_err());
-        assert!(marker(err2).is_err());
+        assert!(conditional(policy1) == Ok(("", policy1_ans)));
+        assert!(conditional(policy2) == Ok(("", policy2_ans)));
+        assert!(conditional(err1).is_err());
+        assert!(conditional(err2).is_err());
+        assert!(conditional(err3).is_err());
+    }
+
+    #[test]
+    fn test_body() {
+        // TODO add more robust tests
+        // at some point the paper policy tests should make their way in here
+        // or at least ones approximating their functionality
+
+        let err1 = "a flows to b or b flows to";
+        // can only have one, top-level conditionals as of now; this test may change in the future
+        let err2 = "if a flows to b and if b flows to c, then d flows to e";
+        let err3 = "a flows to b and a flows to";
+
+        assert!(parse_body(err1).is_err());
+        assert!(parse_body(err2).is_err());
+        assert!(parse_body(err3).is_err());
     }
 
     #[test]

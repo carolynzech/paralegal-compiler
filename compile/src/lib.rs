@@ -15,6 +15,8 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
     - For "a flows to b", instead of getting every node marked b, then filtering
       for the ones that a flows to, call influencees to start from what a flows to
       and filter to the ones marked b.
+    - conditionals: have multiples? perhaps only allowed after periods.
+    - parentheses to change order that obligations are enforced (e.g., A and (B or C)))
 
     (Good Practice / User Experience / Nits)
     - better error handling
@@ -74,10 +76,17 @@ pub struct ConjunctionData<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct ConditionalData<'a> {
+    premise: ASTNode<'a>,
+    obligation: ASTNode<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode<'a> {
     FlowsTo(TwoVarObligation<'a>),
     ControlFlow(TwoVarObligation<'a>),
     Conjunction(Box<ConjunctionData<'a>>),
+    Conditional(Box<ConditionalData<'a>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

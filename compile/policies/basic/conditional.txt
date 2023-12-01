@@ -1,0 +1,5 @@
+let sensitive = some "private_key"
+let encrypts = some "encrypts"
+let store = some "sink"
+
+if sensitive flows to store and store flows to sensitive and store flows to sensitive, then sensitive flows to encrypts.

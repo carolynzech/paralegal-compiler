@@ -39,7 +39,7 @@ impl ContextExt for Context {
 policy!(pol, ctx { 
     let mut sensitive_nodes = ctx.marked_nodes(marker!(private_key));
     let mut encrypts_nodes = ctx.marked_nodes(marker!(encrypt_func));
-    assert_error!(ctx, sensitive_nodes.any(|sensitive| encrypts_nodes.any(|encrypts| ctx.flows_to(sensitive, encrypts, EdgeType::Data))));
+    assert_error!(ctx, sensitive_nodes.all(|sensitive| encrypts_nodes.any(|encrypts| ctx.flows_to(sensitive, encrypts, EdgeType::Data))));
     Ok(()) 
 });
 

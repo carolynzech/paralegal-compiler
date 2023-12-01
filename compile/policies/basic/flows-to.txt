@@ -1,4 +1,4 @@
-let sensitive = some "private_key"
+let sensitive = all "private_key"
 let encrypts = some "encrypt_func"
 
 sensitive flows to encrypts

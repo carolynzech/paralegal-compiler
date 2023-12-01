@@ -1,1 +1,5 @@
+let a = all "a"
+let b = some "b"
+let c = some "c"
+
 a flows to b and a flows to c
