@@ -17,6 +17,12 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
       and filter to the ones marked b.
     - conditionals: have multiples? perhaps only allowed after periods.
     - parentheses to change order that obligations are enforced (e.g., A and (B or C)))
+    - add "In <controller name>" in addition to Always/Sometimes, meaning Paralegal should apply
+      the policy to the controller with that name
+    - “is authorized by” primitive as syntactic sugar
+    - possible syntactic sugar for flows to / control flow influence
+    - negation : "no quantifier" / "does not flow to"
+    - "one" quantifier
 
     (Good Practice / User Experience / Nits)
     - better error handling
@@ -30,7 +36,7 @@ const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
 pub enum Quantifier {
     Some,
     All,
-    No,
+    // No,
 }
 
 impl From<&str> for Quantifier {
@@ -43,6 +49,30 @@ impl From<&str> for Quantifier {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PolicyScope {
+    Always,
+    Sometimes,
+    // AnalysisPoint(&'a str),
+}
+
+impl From<&str> for PolicyScope {
+    fn from(s: &str) -> Self {
+        match s {
+            "always" => PolicyScope::Always,
+            "sometimes" => PolicyScope::Sometimes,
+            &_ => unimplemented!("no other quantifiers supported"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PolicyBody<'a> {
+    scope: PolicyScope,
+    body: ASTNode<'a>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 struct Variable<'a> {
     name: &'a str,
@@ -108,7 +138,7 @@ fn func_call(q: &Quantifier) -> &str {
     match q {
         Quantifier::Some => "any",
         Quantifier::All => "all",
-        Quantifier::No => todo!(),
+        // Quantifier::No => todo!(),
     }
 }
 

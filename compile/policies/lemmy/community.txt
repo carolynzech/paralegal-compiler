@@ -3,6 +3,7 @@ let delete_check = some "community_delete_check"
 let ban_check = some "community_ban_check"
 let write = some "db_write"
 
+Always:
 If community_struct flows to write,
 then community_struct flows to delete_check and 
 delete_check has control flow influence on write and

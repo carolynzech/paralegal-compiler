@@ -10,8 +10,8 @@ use nom::{
 };
 
 use crate::{
-    ASTNode, ConditionalData, ConjunctionData, Quantifier, ThroughData, TwoVarObligation, Variable,
-    VariableBinding,
+    ASTNode, ConditionalData, ConjunctionData, PolicyBody, PolicyScope, Quantifier, ThroughData,
+    TwoVarObligation, Variable, VariableBinding,
 };
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -32,6 +32,10 @@ fn is_nonalphabetic(s: &str) -> Res<&str, &str> {
     Ok((remainder, res))
 }
 
+fn colon(s: &str) -> Res<&str, &str> {
+    context("colon", tag(":"))(s)
+}
+
 fn flows_to(s: &str) -> Res<&str, &str> {
     context("flows to", terminated(tag(FLOWS_TO_TAG), is_nonalphabetic))(s)
 }
@@ -45,6 +49,20 @@ fn control_flow(s: &str) -> Res<&str, &str> {
 
 fn through(s: &str) -> Res<&str, &str> {
     context("through", terminated(tag("through"), is_nonalphabetic))(s)
+}
+
+fn always(s: &str) -> Res<&str, &str> {
+    context(
+        "always",
+        terminated(terminated(tag("always"), colon), is_nonalphabetic),
+    )(s)
+}
+
+fn sometimes(s: &str) -> Res<&str, &str> {
+    context(
+        "sometimes",
+        terminated(terminated(tag("sometimes"), colon), is_nonalphabetic),
+    )(s)
 }
 
 fn _if(s: &str) -> Res<&str, &str> {
@@ -92,12 +110,10 @@ fn quantifier(s: &str) -> Res<&str, Quantifier> {
 fn alphabetic_w_underscores(s: &str) -> Res<&str, &str> {
     let mut combinator = context(
         "alphabetic w/ underscores",
-        recognize(tuple((
-            opt(char('_')),
+        recognize(many1(tuple((
             take_while1(char::is_alphabetic),
             opt(char('_')),
-            opt(take_while1(char::is_alphabetic)),
-        ))),
+        )))),
     );
     let (remainder, res) = combinator(s)?;
     Ok((remainder, res))
@@ -222,12 +238,25 @@ fn conditional<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-fn do_parse<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context("parse body helper", alt((conditional, chained_exprs)))(s)
+fn scope(s: &str) -> Res<&str, PolicyScope> {
+    let mut combinator = context("scope", alt((always, sometimes)));
+    let (remainder, res) = combinator(s)?;
+
+    Ok((remainder, res.into()))
 }
 
-pub fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context("parse body", all_consuming(do_parse))(s)
+fn body_helper<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
+    let mut combinator = context(
+        "parse body helper",
+        tuple((scope, alt((conditional, chained_exprs)))),
+    );
+    let (remainder, (scope, body)) = combinator(s)?;
+
+    Ok((remainder, PolicyBody { scope, body }))
+}
+
+pub fn parse_body<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
+    context("parse body", all_consuming(body_helper))(s)
 }
 
 fn single_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
@@ -273,11 +302,11 @@ mod tests {
         let punc = ",.\n";
         let err = "this is alphabetical";
 
-        assert!(is_nonalphabetic(spaces) == Ok(("", spaces)));
-        assert!(is_nonalphabetic(comma) == Ok(("", comma)));
-        assert!(is_nonalphabetic(period) == Ok(("", period)));
-        assert!(is_nonalphabetic(newline) == Ok(("", newline)));
-        assert!(is_nonalphabetic(punc) == Ok(("", punc)));
+        assert_eq!(is_nonalphabetic(spaces), Ok(("", spaces)));
+        assert_eq!(is_nonalphabetic(comma), Ok(("", comma)));
+        assert_eq!(is_nonalphabetic(period), Ok(("", period)));
+        assert_eq!(is_nonalphabetic(newline), Ok(("", newline)));
+        assert_eq!(is_nonalphabetic(punc), Ok(("", punc)));
         assert!(is_nonalphabetic(err).is_err());
     }
 
@@ -288,8 +317,8 @@ mod tests {
         let err1 = "sensitive";
         let err2 = "\"sensitive";
 
-        assert!(marker(a) == Ok(("", "a")));
-        assert!(marker(b) == Ok(("", "sensitive")));
+        assert_eq!(marker(a), Ok(("", "a")));
+        assert_eq!(marker(b), Ok(("", "sensitive")));
         assert!(marker(err1).is_err());
         assert!(marker(err2).is_err());
     }
@@ -301,10 +330,13 @@ mod tests {
         let wrong = "123hello";
         let partially_keyword = "a flows to b";
 
-        assert!(variable(var1).is_ok());
-        assert!(variable(var2).is_ok());
+        assert_eq!(variable(var1), Ok(("", Variable { name: "a" })));
+        assert_eq!(variable(var2), Ok(("", Variable { name: "sensitive" })));
+        assert_eq!(
+            variable(partially_keyword),
+            Ok(("flows to b", Variable { name: "a" }))
+        );
         assert!(variable(wrong).is_err());
-        assert!(variable(partially_keyword) == Ok(("flows to b", Variable { name: "a" })));
     }
 
     #[test]
@@ -333,9 +365,9 @@ mod tests {
         let err2 = "a flows to b through";
         let err3 = "a has control flow influence on";
 
-        assert!(expr(through) == Ok(("", through_ans)));
-        assert!(expr(flows_to) == Ok(("", flows_to_ans)));
-        assert!(expr(control_flow) == Ok(("", control_flow_ans)));
+        assert_eq!(expr(through), Ok(("", through_ans)));
+        assert_eq!(expr(flows_to), Ok(("", flows_to_ans)));
+        assert_eq!(expr(control_flow), Ok(("", control_flow_ans)));
         assert!(expr(err1).is_err());
         assert!(expr(err2).is_err());
         assert!(expr(err3).is_err());
@@ -382,9 +414,9 @@ mod tests {
 
         let err1 = "a flows to";
 
-        assert!(chained_exprs(policy1) == Ok(("", policy1_ans)));
-        assert!(chained_exprs(policy2) == Ok(("", policy2_ans)));
-        assert!(chained_exprs(policy3) == Ok(("", policy3_ans)));
+        assert_eq!(chained_exprs(policy1), Ok(("", policy1_ans)));
+        assert_eq!(chained_exprs(policy2), Ok(("", policy2_ans)));
+        assert_eq!(chained_exprs(policy3), Ok(("", policy3_ans)));
         assert!(chained_exprs(err1).is_err());
     }
 
@@ -423,8 +455,8 @@ mod tests {
         let err2 = "if a flows to b";
         let err3 = "a flows to b then";
 
-        assert!(conditional(policy1) == Ok(("", policy1_ans)));
-        assert!(conditional(policy2) == Ok(("", policy2_ans)));
+        assert_eq!(conditional(policy1), Ok(("", policy1_ans)));
+        assert_eq!(conditional(policy2), Ok(("", policy2_ans)));
         assert!(conditional(err1).is_err());
         assert!(conditional(err2).is_err());
         assert!(conditional(err3).is_err());
@@ -435,15 +467,104 @@ mod tests {
         // TODO add more robust tests
         // at some point the paper policy tests should make their way in here
         // or at least ones approximating their functionality
+        let lemmy_comm = "always:
+        if community_struct flows to write,
+        then community_struct flows to delete_check and 
+        delete_check has control flow influence on write and
+        community_struct flows to ban_check and
+        ban_check has control flow influence on write";
+
+        let lemmy_comm_ans = PolicyBody {
+            scope: PolicyScope::Always,
+            body: ASTNode::Conditional(Box::new(ConditionalData {
+                premise: ASTNode::FlowsTo(TwoVarObligation {
+                    src: Variable {
+                        name: "community_struct",
+                    },
+                    dest: Variable { name: "write" },
+                }),
+                obligation: ASTNode::Conjunction(Box::new(ConjunctionData {
+                    typ: Conjunction::And,
+                    src: ASTNode::Conjunction(Box::new(ConjunctionData {
+                        typ: Conjunction::And,
+                        src: ASTNode::Conjunction(Box::new(ConjunctionData {
+                            typ: Conjunction::And,
+                            src: ASTNode::FlowsTo(TwoVarObligation {
+                                src: Variable {
+                                    name: "community_struct",
+                                },
+                                dest: Variable {
+                                    name: "delete_check",
+                                },
+                            }),
+                            dest: ASTNode::ControlFlow(TwoVarObligation {
+                                src: Variable {
+                                    name: "delete_check",
+                                },
+                                dest: Variable { name: "write" },
+                            }),
+                        })),
+                        dest: ASTNode::FlowsTo(TwoVarObligation {
+                            src: Variable {
+                                name: "community_struct",
+                            },
+                            dest: Variable { name: "ban_check" },
+                        }),
+                    })),
+                    dest: ASTNode::ControlFlow(TwoVarObligation {
+                        src: Variable { name: "ban_check" },
+                        dest: Variable { name: "write" },
+                    }),
+                })),
+            })),
+        };
 
         let err1 = "a flows to b or b flows to";
         // can only have one, top-level conditionals as of now; this test may change in the future
         let err2 = "if a flows to b and if b flows to c, then d flows to e";
         let err3 = "a flows to b and a flows to";
 
+        assert_eq!(parse_body(lemmy_comm), Ok(("", lemmy_comm_ans)));
+
         assert!(parse_body(err1).is_err());
         assert!(parse_body(err2).is_err());
         assert!(parse_body(err3).is_err());
+    }
+
+    #[test]
+    fn test_alphabetic_w_underscores() {
+        let no_underscores = "var";
+        let one_underscore = "hello_world";
+        let two_underscores = "community_delete_check";
+        let trailing_underscore = "hello_world_";
+        let five_underscores = "this_is_a_long_variable";
+
+        assert_eq!(
+            alphabetic_w_underscores(no_underscores),
+            Ok(("", no_underscores))
+        );
+        assert_eq!(
+            alphabetic_w_underscores(one_underscore),
+            Ok(("", one_underscore))
+        );
+        assert_eq!(
+            alphabetic_w_underscores(two_underscores),
+            Ok(("", two_underscores))
+        );
+        assert_eq!(
+            alphabetic_w_underscores(trailing_underscore),
+            Ok(("", trailing_underscore))
+        );
+        assert_eq!(
+            alphabetic_w_underscores(five_underscores),
+            Ok(("", five_underscores))
+        );
+
+        // these are errors for now, but don't need to be
+        let leading_underscore = "_hello_world";
+        let two_consec_underscores = "multiple__underscores";
+        assert!(alphabetic_w_underscores(leading_underscore).is_err());
+        assert!(all_consuming(alphabetic_w_underscores)(two_consec_underscores).is_err());
     }
 
     #[test]
@@ -460,12 +581,21 @@ mod tests {
             quantifier: Quantifier::All,
             marker: "sensitive",
         };
+        let binding3 = "let delete_check = some \"community_delete_check\"\n        ";
+        let binding3_ans = VariableBinding {
+            variable: Variable {
+                name: "delete_check",
+            },
+            quantifier: Quantifier::Some,
+            marker: "community_delete_check",
+        };
 
         let var_in_quotes = "let \"a\" = some \"a\"";
         let wrong_quantifier = "let a = any \"a\"";
 
-        assert!(single_binding(binding1) == Ok(("", binding1_ans)));
-        assert!(single_binding(binding2) == Ok(("", binding2_ans)));
+        assert_eq!(single_binding(binding1), Ok(("", binding1_ans)));
+        assert_eq!(single_binding(binding2), Ok(("", binding2_ans)));
+        assert_eq!(single_binding(binding3), Ok(("", binding3_ans)));
         assert!(single_binding(var_in_quotes).is_err());
         assert!(single_binding(wrong_quantifier).is_err());
     }
@@ -497,12 +627,43 @@ mod tests {
                 marker: "check_rights",
             },
         ];
+        let lemmy_comm = "let community_struct = some \"community\"
+        let delete_check = some \"community_delete_check\"
+        let ban_check = some \"community_ban_check\"
+        let write = some \"db_write\"";
+        let lemmy_comm_ans = vec![
+            VariableBinding {
+                variable: Variable {
+                    name: "community_struct",
+                },
+                quantifier: Quantifier::Some,
+                marker: "community",
+            },
+            VariableBinding {
+                variable: Variable {
+                    name: "delete_check",
+                },
+                quantifier: Quantifier::Some,
+                marker: "community_delete_check",
+            },
+            VariableBinding {
+                variable: Variable { name: "ban_check" },
+                quantifier: Quantifier::Some,
+                marker: "community_ban_check",
+            },
+            VariableBinding {
+                variable: Variable { name: "write" },
+                quantifier: Quantifier::Some,
+                marker: "db_write",
+            },
+        ];
 
         let not_separated = "let commit = some \"commit\"let store = some \"sink\"";
 
-        assert!(parse_bindings(single_w_spaces) == Ok(("", single_ans)));
-        assert!(parse_bindings(multi_newline) == Ok(("", multi_ans.clone())));
-        assert!(parse_bindings(multi_comma) == Ok(("", multi_ans)));
+        assert_eq!(parse_bindings(single_w_spaces), Ok(("", single_ans)));
+        assert_eq!(parse_bindings(multi_newline), Ok(("", multi_ans.clone())));
+        assert_eq!(parse_bindings(multi_comma), Ok(("", multi_ans)));
+        assert_eq!(parse_bindings(lemmy_comm), Ok(("", lemmy_comm_ans)));
         assert!(parse_bindings(not_separated).is_err());
     }
 }
