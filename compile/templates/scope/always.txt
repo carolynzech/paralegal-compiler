@@ -1,0 +1,3 @@
+{{#each bindings as |b|}}
+    let mut {{b.variable.name}}_nodes = marked_nodes(marker!({{b.marker}}));
+{{/each}}

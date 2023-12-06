@@ -1,0 +1,13 @@
+{{src_var}}_nodes.all(|{{src_var}}| {
+    let {{dest_var}}_nodes_that_meet_condition : Vec<Node> = ctx
+            .influencees({{src_var}}, EdgeType::Data)
+            .filter(|n| {{dest_var}}_nodes.contains(n))
+            .collect();
+    
+    let is_compliant = {{dest_var}}_nodes_that_meet_condition.all(|{{dest_var}}| {
+        {{obligation}}
+    });
+
+    assert_error!(ctx, is_compliant, "Policy failed.");
+    Ok(())
+})

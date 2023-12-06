@@ -1,0 +1,36 @@
+PREMISE = let b_nodes_that_meet_condition : Vec<Node> = ctx
+            .influencees(a, EdgeType::Data)
+            .filter(|n| b_nodes.contains(n))
+            .collect();
+OBLIGATION = b_nodes_that_meet_condition.all(|n| {
+            <obligation body>
+        })
+
+if some a flows to some b compiles to:
+    a_nodes.all(|a| {
+        PREMISE
+        OBLIGATION
+    })
+
+if some a flows to all b compiles to:
+    a_nodes.all(|a| {
+        if PREMISE == b_nodes {
+            OBLIGATION
+        }
+    })
+
+if all a flows to some b compiles to:
+    if a_nodes.all(|a| { !PREMISE.is_empty() }) {
+        a_nodes.all(|a|) {
+            PREMISE
+            OBLIGATION
+        } 
+    }
+
+if all a flows to all b compiles to:
+    if a_nodes.all(|a| { PREMISE. == b_nodes }) {
+        a_nodes.all(|a|) {
+            PREMISE
+            OBLIGATION
+        } 
+    }

@@ -37,8 +37,30 @@ impl ContextExt for Context {
 }
 
 policy!(pol, ctx { 
-    {{scope}}
-    {{obligation}}
+        let mut community_struct_nodes = marked_nodes(marker!(community));
+    let mut delete_check_nodes = marked_nodes(marker!(community_delete_check));
+    let mut ban_check_nodes = marked_nodes(marker!(community_ban_check));
+    let mut write_nodes = marked_nodes(marker!(db_write));
+
+    community_struct_nodes.all(|community_struct| {
+    let write_nodes_that_meet_condition : Vec<Node> = ctx
+            .influencees(community_struct, EdgeType::Data)
+            .filter(|n| write_nodes.contains(n))
+            .collect();
+    
+    let is_compliant = write_nodes_that_meet_condition.all(|write| {
+        delete_check_nodes.any(|delete_check| )
+ctx.flows_to(community_struct, delete_check, EdgeType::Data)
+ && ctx.has_ctrl_influence(delete_check, write)
+ && ban_check_nodes.any(|ban_check| )
+ctx.flows_to(community_struct, ban_check, EdgeType::Data)
+ && ctx.has_ctrl_influence(ban_check, write)
+
+    });
+
+    assert_error!(ctx, is_compliant, "Policy failed.");
+    Ok(())
+})
 });
 
 fn main() -> Result<()> {

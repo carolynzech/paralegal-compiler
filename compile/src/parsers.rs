@@ -160,7 +160,10 @@ fn through_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 
     Ok((
         remainder,
-        ASTNode::Through(Box::new(ThroughData { flows_to, var })),
+        ASTNode::Through(Box::new(ThroughData {
+            flows_to,
+            checkpoint: var,
+        })),
     ))
 }
 
@@ -291,8 +294,6 @@ mod tests {
 
     use super::*;
 
-    // TODO: test other parsers
-
     #[test]
     fn test_is_nonalphabetic() {
         let spaces = "     ";
@@ -347,7 +348,7 @@ mod tests {
                 src: Variable { name: "a" },
                 dest: Variable { name: "b" },
             }),
-            var: Variable { name: "c" },
+            checkpoint: Variable { name: "c" },
         }));
 
         let flows_to = "a flows to b";
