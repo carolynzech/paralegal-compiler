@@ -225,18 +225,19 @@ fn introduce_variable<'a>(
     bindings: &Vec<VariableBinding>,
     visited: &mut HashSet<Variable<'a>>,
     registered_templates: &mut HashSet<&'a str>,
+    num_vars_introduced: &mut usize,
 ) -> String {
     let mut map: HashMap<&str, &str> = HashMap::new();
     if visited.contains(variable) {
         return String::new();
     }
     visited.insert(variable.clone());
+    *num_vars_introduced += 1;
 
     let binding = find_variable(bindings, &variable);
 
     map.insert("src_var", variable.name);
     map.insert("src_func_call", func_call(&binding.quantifier));
-    // TODO what goes for body?
 
     register_and_render_template(handlebars, &mut map, registered_templates, INTRODUCE_VAR)
 }
@@ -248,6 +249,7 @@ fn traverse_ast<'a>(
     bindings: &Vec<VariableBinding>,
     visited: &mut HashSet<Variable<'a>>,
     registered_templates: &mut HashSet<&'a str>,
+    num_vars_introduced: &mut usize,
 ) -> String {
     let mut map: HashMap<&str, &str> = HashMap::new();
     match node {
@@ -260,6 +262,7 @@ fn traverse_ast<'a>(
                 bindings,
                 visited,
                 registered_templates,
+                num_vars_introduced,
             );
             let dest_intro = introduce_variable(
                 handlebars,
@@ -267,6 +270,7 @@ fn traverse_ast<'a>(
                 bindings,
                 visited,
                 registered_templates,
+                num_vars_introduced,
             );
             let flows_to_clause = register_and_render_template(
                 handlebars,
@@ -285,6 +289,7 @@ fn traverse_ast<'a>(
                 bindings,
                 visited,
                 registered_templates,
+                num_vars_introduced,
             );
             let dest_intro = introduce_variable(
                 handlebars,
@@ -292,6 +297,7 @@ fn traverse_ast<'a>(
                 bindings,
                 visited,
                 registered_templates,
+                num_vars_introduced,
             );
             let control_flow_clause = register_and_render_template(
                 handlebars,
@@ -325,6 +331,7 @@ fn traverse_ast<'a>(
                     bindings,
                     visited,
                     registered_templates,
+                    num_vars_introduced,
                 );
                 let right_res = traverse_ast(
                     handlebars,
@@ -332,6 +339,7 @@ fn traverse_ast<'a>(
                     bindings,
                     visited,
                     registered_templates,
+                    num_vars_introduced,
                 );
                 format!("{left_res} && {right_res}")
             }
@@ -342,6 +350,7 @@ fn traverse_ast<'a>(
                     bindings,
                     visited,
                     registered_templates,
+                    num_vars_introduced,
                 );
                 let right_res = traverse_ast(
                     handlebars,
@@ -349,6 +358,7 @@ fn traverse_ast<'a>(
                     bindings,
                     visited,
                     registered_templates,
+                    num_vars_introduced,
                 );
                 format!("{left_res} || {right_res}")
             }
@@ -365,13 +375,18 @@ fn traverse_ast<'a>(
                     visited.insert(premise_ob.src.clone());
                     visited.insert(premise_ob.dest.clone());
 
-                    let obligation_body = traverse_ast(
+                    let body_text = traverse_ast(
                         handlebars,
                         conditional_data.obligation,
                         bindings,
                         visited,
                         registered_templates,
+                        num_vars_introduced,
                     );
+
+                    let parens = ")".repeat(*num_vars_introduced);
+                    let obligation_body = format!("{body_text}{parens}");
+
                     map.insert("obligation", &obligation_body);
 
                     let src_binding = find_variable(bindings, &premise_ob.src);
@@ -399,12 +414,14 @@ fn compile_ast<'a>(
     registered_templates: &mut HashSet<&'a str>,
 ) -> String {
     let mut visited: HashSet<Variable<'a>> = HashSet::new();
+    let mut num_vars_introduced: usize = 0;
     traverse_ast(
         handlebars,
         node,
         bindings,
         &mut visited,
         registered_templates,
+        &mut num_vars_introduced,
     )
 }
 
@@ -424,7 +441,7 @@ fn compile_policy<'a>(
         &bindings,
         &mut registered_templates,
     );
-    // dbg!(&scope_res);
+
     map.insert("scope", &scope_res);
 
     let ast_res = compile_ast(
@@ -442,7 +459,7 @@ fn compile_policy<'a>(
         BASE_TEMPLATE,
     );
 
-    fs::write("test.rs", &res)?;
+    fs::write("compiled-policy.rs", &res)?;
     Ok(())
 }
 
