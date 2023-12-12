@@ -1,5 +1,6 @@
 let card = all "credit_card"
-let encrypt = some "hashed"
+let encrypt = some "encrypt"
 let store = some "store"
 
+Always:
 card flows to store through encrypt

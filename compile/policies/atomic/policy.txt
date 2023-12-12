@@ -3,6 +3,12 @@ let store = some "sink"
 let new_resource = some "new_resource"
 let auth_check = some "check_rights"
 
+Always:
 If commit flows to store,
-then commit flows to auth_check and new_resource does not flow to auth_check
-and auth_check has control flow influence on the store.
+then
+    (commit flows to auth_check)
+    and
+    (if commit flows to new_resource, 
+    then new_resource does not flow to auth_check)
+    and 
+    (auth_check has control flow influence on the store).

@@ -1,1 +1,1 @@
-ctx.always_happens_before({{src_var}}_nodes, |checkpoint| {{checkpoint}}_nodes.contains(checkpoint), |terminal| {{dest_var}}_nodes.contains(terminal));
+ctx.always_happens_before({{src_var}}_nodes, |checkpoint| {{checkpoint}}_nodes.contains(checkpoint), |terminal| {{dest_var}}_nodes.contains(terminal))

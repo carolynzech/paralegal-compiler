@@ -39,25 +39,20 @@ impl ContextExt for Context {
 }
 
 policy!(pol, ctx {
-    let mut community_struct_nodes = marked_nodes(marker!(community));
-    let mut delete_check_nodes = marked_nodes(marker!(community_delete_check));
-    let mut ban_check_nodes = marked_nodes(marker!(community_ban_check));
-    let mut write_nodes = marked_nodes(marker!(db_write));
+        let mut card_nodes = marked_nodes(marker!(credit_card));
+    let mut sink_nodes = marked_nodes(marker!(store));
+    let mut consent_nodes = marked_nodes(marker!(future_usage_decision));
 
-    community_struct_nodes.all(|community_struct| {
-    let write_nodes_that_meet_condition : Vec<Node> = ctx
-            .influencees(community_struct, EdgeType::Data)
-            .filter(|n| write_nodes.contains(n))
-            .collect();
+    card_nodes.all(|card| {
+        let sink_nodes_that_meet_condition : Vec<Node> = ctx
+                .influencees(card, EdgeType::Data)
+                .filter(|n| sink_nodes.contains(n))
+                .collect();
 
-    let is_compliant = write_nodes_that_meet_condition.all(|write| {
-        delete_check_nodes.any(|delete_check|
-            ctx.flows_to(community_struct, delete_check, EdgeType::Data)
-            && ctx.has_ctrl_influence(delete_check, write)
-            && ban_check_nodes.any(|ban_check|
-                ctx.flows_to(community_struct, ban_check, EdgeType::Data)
-                && ctx.has_ctrl_influence(ban_check, write)
-        ))
+        let is_compliant = sink_nodes_that_meet_condition.all(|sink| {
+            consent_nodes.any(|consent|
+                ctx.has_ctrl_influence(consent, sink)
+        )
     });
 
     assert_error!(ctx, is_compliant, "Policy failed.");

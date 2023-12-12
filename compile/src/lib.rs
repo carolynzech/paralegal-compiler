@@ -245,7 +245,7 @@ fn introduce_variable<'a>(
 // TODO need to add logic to introduce the variable in the policy if this is the first time it's been referenced
 fn traverse_ast<'a>(
     handlebars: &mut Handlebars,
-    node: ASTNode<'a>,
+    node: &ASTNode<'a>,
     bindings: &Vec<VariableBinding>,
     visited: &mut HashSet<Variable<'a>>,
     registered_templates: &mut HashSet<&'a str>,
@@ -308,7 +308,7 @@ fn traverse_ast<'a>(
             format!("{src_intro}{dest_intro}{control_flow_clause}")
         }
         ASTNode::Through(through_data) => {
-            match through_data.flows_to {
+            match &through_data.flows_to {
                 ASTNode::FlowsTo(obligation) => {
                     map.insert("src_var", obligation.src.name);
                     map.insert("dest_var", obligation.dest.name);
@@ -327,7 +327,7 @@ fn traverse_ast<'a>(
             Conjunction::And => {
                 let left_res = traverse_ast(
                     handlebars,
-                    conjunction_data.src,
+                    &conjunction_data.src,
                     bindings,
                     visited,
                     registered_templates,
@@ -335,7 +335,7 @@ fn traverse_ast<'a>(
                 );
                 let right_res = traverse_ast(
                     handlebars,
-                    conjunction_data.dest,
+                    &conjunction_data.dest,
                     bindings,
                     visited,
                     registered_templates,
@@ -346,7 +346,7 @@ fn traverse_ast<'a>(
             Conjunction::Or => {
                 let left_res = traverse_ast(
                     handlebars,
-                    conjunction_data.src,
+                    &conjunction_data.src,
                     bindings,
                     visited,
                     registered_templates,
@@ -354,7 +354,7 @@ fn traverse_ast<'a>(
                 );
                 let right_res = traverse_ast(
                     handlebars,
-                    conjunction_data.dest,
+                    &conjunction_data.dest,
                     bindings,
                     visited,
                     registered_templates,
@@ -364,7 +364,7 @@ fn traverse_ast<'a>(
             }
         },
         ASTNode::Conditional(conditional_data) => {
-            match conditional_data.premise {
+            match &conditional_data.premise {
                 ASTNode::FlowsTo(premise_ob) => {
                     map.insert("src_var", premise_ob.src.name);
                     map.insert("dest_var", premise_ob.dest.name);
@@ -377,7 +377,7 @@ fn traverse_ast<'a>(
 
                     let body_text = traverse_ast(
                         handlebars,
-                        conditional_data.obligation,
+                        &conditional_data.obligation,
                         bindings,
                         visited,
                         registered_templates,
@@ -415,14 +415,23 @@ fn compile_ast<'a>(
 ) -> String {
     let mut visited: HashSet<Variable<'a>> = HashSet::new();
     let mut num_vars_introduced: usize = 0;
-    traverse_ast(
+    let res = traverse_ast(
         handlebars,
-        node,
+        &node,
         bindings,
         &mut visited,
         registered_templates,
         &mut num_vars_introduced,
-    )
+    );
+    // janky way of closing parentheses at the very end
+    // this will be removed soon
+    match node {
+        ASTNode::Conjunction(_) => {
+            let parens = ")".repeat(num_vars_introduced);
+            format!("{res}{parens}")
+        }
+        _ => res,
+    }
 }
 
 fn compile_policy<'a>(
