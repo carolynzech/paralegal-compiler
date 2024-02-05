@@ -10,8 +10,7 @@ use nom::{
 };
 
 use crate::{
-    ASTNode, ConditionalData, ConjunctionData, PolicyBody, PolicyScope, Quantifier, ThroughData,
-    TwoVarObligation, Variable, VariableBinding,
+    ASTNode, Conjunction, TwoNodeObligation, PolicyBody, PolicyScope, Quantifier, ThreeVarObligation, TwoVarObligation, Variable, VariableBinding
 };
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -156,15 +155,21 @@ fn through_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
         "through expr",
         separated_pair(flows_to_expr, through, variable),
     );
-    let (remainder, (flows_to, var)) = combinator(s)?;
+    let (remainder, (flows_to, checkpoint)) = combinator(s)?;
 
-    Ok((
-        remainder,
-        ASTNode::Through(Box::new(ThroughData {
-            flows_to,
-            checkpoint: var,
-        })),
-    ))
+    match flows_to {
+        ASTNode::FlowsTo(obligation) => {
+            Ok((
+                remainder,
+                ASTNode::Through(ThreeVarObligation {
+                    src: obligation.src,
+                    dest: obligation.dest,
+                    checkpoint,
+                }),
+            ))
+        }
+        _ => panic!("shouldn't reach this case; flows_to combinator should have failed")
+    } 
 }
 
 // first tries to parse through expressions, then regular flows to if through fails
@@ -215,11 +220,16 @@ fn chained_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
                 conj_expr_vec
                     .into_iter()
                     .fold(first_expr, |acc, (conj, next_expr)| {
-                        ASTNode::Conjunction(Box::new(ConjunctionData {
-                            typ: conj.into(),
-                            src: acc,
-                            dest: next_expr,
-                        }))
+                        let data : Box<TwoNodeObligation<'a>> = Box::new(
+                            TwoNodeObligation {
+                                src: acc,
+                                dest: next_expr,
+                            });
+                        let conj_type : Conjunction = conj.into();
+                        match conj_type {
+                            And => ASTNode::And(data),
+                            Or => ASTNode::Or(data),
+                        }
                     })
             },
         ),
@@ -234,10 +244,11 @@ fn conditional<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let (remainder, (premise, obligation)) = combinator(s)?;
     Ok((
         remainder,
-        ASTNode::Conditional(Box::new(ConditionalData {
-            premise,
-            obligation,
-        })),
+        ASTNode::Conditional(Box::new(
+            TwoNodeObligation {
+                src: premise,
+                dest: obligation,
+            })),
     ))
 }
 
@@ -343,13 +354,11 @@ mod tests {
     #[test]
     fn test_expr() {
         let through = "a flows to b through c";
-        let through_ans = ASTNode::Through(Box::new(ThroughData {
-            flows_to: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "a" },
-                dest: Variable { name: "b" },
-            }),
+        let through_ans = ASTNode::Through(ThreeVarObligation {
+            src: Variable { name: "a" },
+            dest: Variable { name: "b" },
             checkpoint: Variable { name: "c" },
-        }));
+        });
 
         let flows_to = "a flows to b";
         let flows_to_ans = ASTNode::FlowsTo(TwoVarObligation {
@@ -382,8 +391,7 @@ mod tests {
             dest: Variable { name: "b" },
         });
         let policy2 = "a flows to b and a flows to c";
-        let policy2_ans = ASTNode::Conjunction(Box::new(ConjunctionData {
-            typ: Conjunction::And,
+        let policy2_ans = ASTNode::And(Box::new(TwoNodeObligation {
             src: ASTNode::FlowsTo(TwoVarObligation {
                 src: Variable { name: "a" },
                 dest: Variable { name: "b" },
@@ -394,10 +402,8 @@ mod tests {
             }),
         }));
         let policy3 = "a has control flow influence on b or a flows to c and b flows to c";
-        let policy3_ans = ASTNode::Conjunction(Box::new(ConjunctionData {
-            typ: Conjunction::And,
-            src: ASTNode::Conjunction(Box::new(ConjunctionData {
-                typ: Conjunction::Or,
+        let policy3_ans = ASTNode::And(Box::new(TwoNodeObligation {
+            src: ASTNode::Or(Box::new(TwoNodeObligation {
                 src: ASTNode::ControlFlow(TwoVarObligation {
                     src: Variable { name: "a" },
                     dest: Variable { name: "b" },
@@ -424,20 +430,19 @@ mod tests {
     #[test]
     fn test_conditional() {
         let policy1 = "if a flows to b, then c flows to d";
-        let policy1_ans = ASTNode::Conditional(Box::new(ConditionalData {
-            premise: ASTNode::FlowsTo(TwoVarObligation {
+        let policy1_ans = ASTNode::Conditional(Box::new(TwoNodeObligation {
+            src: ASTNode::FlowsTo(TwoVarObligation {
                 src: Variable { name: "a" },
                 dest: Variable { name: "b" },
             }),
-            obligation: ASTNode::FlowsTo(TwoVarObligation {
+            dest: ASTNode::FlowsTo(TwoVarObligation {
                 src: Variable { name: "c" },
                 dest: Variable { name: "d" },
             }),
         }));
         let policy2 = "if a flows to b and b flows to c, then c has control flow influence on d";
-        let policy2_ans = ASTNode::Conditional(Box::new(ConditionalData {
-            premise: ASTNode::Conjunction(Box::new(ConjunctionData {
-                typ: Conjunction::And,
+        let policy2_ans = ASTNode::Conditional(Box::new(TwoNodeObligation {
+            src: ASTNode::And(Box::new(TwoNodeObligation {
                 src: ASTNode::FlowsTo(TwoVarObligation {
                     src: Variable { name: "a" },
                     dest: Variable { name: "b" },
@@ -447,7 +452,7 @@ mod tests {
                     dest: Variable { name: "c" },
                 }),
             })),
-            obligation: ASTNode::ControlFlow(TwoVarObligation {
+            dest: ASTNode::ControlFlow(TwoVarObligation {
                 src: Variable { name: "c" },
                 dest: Variable { name: "d" },
             }),
@@ -477,19 +482,16 @@ mod tests {
 
         let lemmy_comm_ans = PolicyBody {
             scope: PolicyScope::Always,
-            body: ASTNode::Conditional(Box::new(ConditionalData {
-                premise: ASTNode::FlowsTo(TwoVarObligation {
+            body: ASTNode::Conditional(Box::new(TwoNodeObligation {
+                src: ASTNode::FlowsTo(TwoVarObligation {
                     src: Variable {
                         name: "community_struct",
                     },
                     dest: Variable { name: "write" },
                 }),
-                obligation: ASTNode::Conjunction(Box::new(ConjunctionData {
-                    typ: Conjunction::And,
-                    src: ASTNode::Conjunction(Box::new(ConjunctionData {
-                        typ: Conjunction::And,
-                        src: ASTNode::Conjunction(Box::new(ConjunctionData {
-                            typ: Conjunction::And,
+                dest: ASTNode::And(Box::new(TwoNodeObligation {
+                    src: ASTNode::And(Box::new(TwoNodeObligation {
+                        src: ASTNode::And(Box::new(TwoNodeObligation {
                             src: ASTNode::FlowsTo(TwoVarObligation {
                                 src: Variable {
                                     name: "community_struct",

@@ -76,7 +76,6 @@ impl From<&str> for Quantifier {
 pub enum PolicyScope {
     Always,
     Sometimes,
-    // AnalysisPoint(&'a str),
 }
 
 impl From<&str> for PolicyScope {
@@ -100,7 +99,7 @@ struct Variable<'a> {
     name: &'a str,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TwoVarObligation<'a> {
     src: Variable<'a>,
     dest: Variable<'a>,
@@ -121,32 +120,27 @@ impl From<&str> for Conjunction {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ConjunctionData<'a> {
-    typ: Conjunction,
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct TwoNodeObligation<'a> {
     src: ASTNode<'a>,
-    dest: ASTNode<'a>,
+    dest: ASTNode<'a>
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ConditionalData<'a> {
-    premise: ASTNode<'a>,
-    obligation: ASTNode<'a>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ThroughData<'a> {
-    flows_to: ASTNode<'a>,
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ThreeVarObligation<'a> {
+    src: Variable<'a>,
+    dest: Variable<'a>,
     checkpoint: Variable<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ASTNode<'a> {
     FlowsTo(TwoVarObligation<'a>),
     ControlFlow(TwoVarObligation<'a>),
-    Through(Box<ThroughData<'a>>),
-    Conjunction(Box<ConjunctionData<'a>>),
-    Conditional(Box<ConditionalData<'a>>),
+    Through(ThreeVarObligation<'a>),
+    And(Box<TwoNodeObligation<'a>>),
+    Or(Box<TwoNodeObligation<'a>>),
+    Conditional(Box<TwoNodeObligation<'a>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize)]
@@ -183,7 +177,7 @@ fn register_and_render_template<'a, T: serde::Serialize, U: serde::Serialize>(
         .expect(&format!("Could not render {name} handlebars template"))
 }
 
-fn compile_scope<'a>(
+fn compile_policy_scope<'a>(
     handlebars: &mut Handlebars,
     scope: PolicyScope,
     bindings: &Vec<VariableBinding>,
@@ -207,203 +201,197 @@ fn compile_scope<'a>(
     }
 }
 
-fn find_variable<'a>(
-    bindings: &Vec<VariableBinding<'a>>,
-    variable: &Variable<'a>,
-) -> VariableBinding<'a> {
-    bindings
-        .iter()
-        .find(|b| b.variable == *variable)
-        .unwrap()
-        .to_owned()
-}
+/*
+wait... but if the same node is opening & closing two variables, 
+how do you know which should be nested inside the other
+ -- think b/c of this "same object" rule we've established, the *object*
+ always goes first, e.g.
+    A flows to B
+    A has control flow influence on B
+introduce B first, then A, because we need to establish B as *an* object
+before we talk about A
 
-// Called when a variable is referenced for the first time in the policy body
-fn introduce_variable<'a>(
-    handlebars: &mut Handlebars,
-    variable: &Variable<'a>,
-    bindings: &Vec<VariableBinding>,
-    visited: &mut HashSet<Variable<'a>>,
-    registered_templates: &mut HashSet<&'a str>,
-    num_vars_introduced: &mut usize,
-) -> String {
-    let mut map: HashMap<&str, &str> = HashMap::new();
-    if visited.contains(variable) {
-        return String::new();
+
+minimum example:
+all passwords flow to some encrypts and
+all passwords flow to some encrypts
+
+let [passwords, encrypts] (
+    FlowsTo(passwords, encrypts) &&
+    FlowsTo(passwords, encrypts)
+)
+
+if we compile to:
+all passwords | some encrypts | flows_to(passwords, encrypts)
+that's wrong (needs to be the same encrypts object), but
+some encrypts | all passwords | flows_to(passwords, encrypts)
+is correct
+
+(this works)
+all passwords flow to some encrypts1 and
+all private_keys flow to some encrypts2
+
+some encrypts1 | all passwords | flows_to(passwords, encrypts1) &&
+some encrypts2 | all private_keys | flows_to(passwords, encrypts2)
+*/
+
+/*
+STEP 1:
+create a hashmap of ASTNode --> set of Variables they reference
+traverse tree until you reach a leaf (flows to / control flow)
+at that point, make first entry in hashmap
+in non-leaf nodes, their entries should be the unique set of their children's results
+*/
+
+fn unionize_var_sets<'a>(left_set : &HashSet<Variable<'a>>, right_set: &HashSet<Variable<'a>>, union: &mut HashSet<Variable<'a>>) {
+    let ref_union: HashSet<&Variable<'a>> = left_set.union(&right_set).collect();
+    // TODO there must be a more idiomatic way of doing this
+    for var_ref in ref_union {
+        let var = var_ref.clone().to_owned();
+        union.insert(var);
     }
-    visited.insert(variable.clone());
-    *num_vars_introduced += 1;
-
-    let binding = find_variable(bindings, &variable);
-
-    map.insert("src_var", variable.name);
-    map.insert("src_func_call", func_call(&binding.quantifier));
-
-    register_and_render_template(handlebars, &mut map, registered_templates, INTRODUCE_VAR)
 }
 
-// TODO need to add logic to introduce the variable in the policy if this is the first time it's been referenced
-fn traverse_ast<'a>(
-    handlebars: &mut Handlebars,
+// bottom-up tree traversal to determine the set of all variables that a node & its children reference
+fn determine_var_scope<'a>(
     node: &ASTNode<'a>,
-    bindings: &Vec<VariableBinding>,
-    visited: &mut HashSet<Variable<'a>>,
-    registered_templates: &mut HashSet<&'a str>,
-    num_vars_introduced: &mut usize,
-) -> String {
+    references: &mut HashMap<ASTNode<'a>, HashSet<Variable<'a>>>,
+) {
     let mut map: HashMap<&str, &str> = HashMap::new();
     match node {
-        ASTNode::FlowsTo(obligation) => {
-            map.insert("src_var", obligation.src.name);
-            map.insert("dest_var", obligation.dest.name);
-            let src_intro = introduce_variable(
-                handlebars,
-                &obligation.src,
-                bindings,
-                visited,
-                registered_templates,
-                num_vars_introduced,
-            );
-            let dest_intro = introduce_variable(
-                handlebars,
-                &obligation.dest,
-                bindings,
-                visited,
-                registered_templates,
-                num_vars_introduced,
-            );
-            let flows_to_clause = register_and_render_template(
-                handlebars,
-                &mut map,
-                registered_templates,
-                FLOWS_TO_TEMPLATE,
-            );
-            format!("{src_intro}{dest_intro}{flows_to_clause}")
-        }
-        ASTNode::ControlFlow(obligation) => {
-            map.insert("src_var", obligation.src.name);
-            map.insert("dest_var", obligation.dest.name);
-            let src_intro = introduce_variable(
-                handlebars,
-                &obligation.src,
-                bindings,
-                visited,
-                registered_templates,
-                num_vars_introduced,
-            );
-            let dest_intro = introduce_variable(
-                handlebars,
-                &obligation.dest,
-                bindings,
-                visited,
-                registered_templates,
-                num_vars_introduced,
-            );
-            let control_flow_clause = register_and_render_template(
-                handlebars,
-                &mut map,
-                registered_templates,
-                CONTROL_FLOW_TEMPLATE,
-            );
-            format!("{src_intro}{dest_intro}{control_flow_clause}")
-        }
-        ASTNode::Through(through_data) => {
-            match &through_data.flows_to {
-                ASTNode::FlowsTo(obligation) => {
-                    map.insert("src_var", obligation.src.name);
-                    map.insert("dest_var", obligation.dest.name);
-                }
-                _ => panic!("should not have anything other than FlowsTo as src of Through node"),
-            };
-            map.insert("checkpoint", through_data.checkpoint.name);
-            register_and_render_template(
-                handlebars,
-                &mut map,
-                registered_templates,
-                THROUGH_TEMPLATE,
-            )
-        }
-        ASTNode::Conjunction(conjunction_data) => match conjunction_data.typ {
-            Conjunction::And => {
-                let left_res = traverse_ast(
-                    handlebars,
-                    &conjunction_data.src,
-                    bindings,
-                    visited,
-                    registered_templates,
-                    num_vars_introduced,
-                );
-                let right_res = traverse_ast(
-                    handlebars,
-                    &conjunction_data.dest,
-                    bindings,
-                    visited,
-                    registered_templates,
-                    num_vars_introduced,
-                );
-                format!("{left_res} && {right_res}")
-            }
-            Conjunction::Or => {
-                let left_res = traverse_ast(
-                    handlebars,
-                    &conjunction_data.src,
-                    bindings,
-                    visited,
-                    registered_templates,
-                    num_vars_introduced,
-                );
-                let right_res = traverse_ast(
-                    handlebars,
-                    &conjunction_data.dest,
-                    bindings,
-                    visited,
-                    registered_templates,
-                    num_vars_introduced,
-                );
-                format!("{left_res} || {right_res}")
+        ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation) => {
+            references[node] = HashSet::from([obligation.src, obligation.dest]);
+        },
+        ASTNode::Through(obligation) => {
+            references[node] = HashSet::from([obligation.src, obligation.dest, obligation.checkpoint]);
+        },
+        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Conditional(obligation) => {
+            determine_var_scope(&obligation.src, references);
+            determine_var_scope(&obligation.dest, references);
+            
+            // this node's var scope is the set of its children's
+            let left_set: HashSet<Variable<'a>> = references[&obligation.src];
+            let right_set: HashSet<Variable<'a>> = references[&obligation.dest];
+            
+            let mut union : HashSet<Variable<'a>> = HashSet::new();
+            unionize_var_sets(&left_set, &right_set, &mut union);
+            references[node] = union;
+
+        },
+    }
+}
+
+/*
+STEP 2:
+**Pretty Printing**
+
+if you're opening and closing, output this:
+let [var_name] (
+    {rest}
+)
+
+at a non-leaf, 
+rest = 
+    {conjunction type}
+    {recursive result}
+
+at a leaf, rest = {leaf node}
+
+let [encrypts] (
+    And (
+        let [passwords] (
+            FlowsTo(passwords, encrypts)
+        )
+        let [private_keys] (
+            FlowsTo(private_keys, encrypts)
+        )
+    )
+)
+*/
+
+enum IntermediateNode<'a> {
+    Binding(Box<BindingBody<'a>>),
+    Conditional(Box<NonLeafNodeBody<'a>>),
+    And(Box<NonLeafNodeBody<'a>>),
+    Or(Box<NonLeafNodeBody<'a>>),
+    FlowsTo(TwoVarObligation<'a>),
+    ControlFlow(TwoVarObligation<'a>),
+    Through(ThreeVarObligation<'a>),
+}
+
+struct BindingBody<'a> {
+    variable: Variable<'a>,
+    body: IntermediateNode<'a>
+}
+
+struct NonLeafNodeBody<'a> {
+    src: IntermediateNode<'a>,
+    dest: IntermediateNode<'a>
+}
+
+/*
+STEP 2:
+(recursive algorithm)
+From the top:
+For each var in that node's set:
+    - if the node is a nonleaf:
+        - if the var in the left child's set and the right child's set, this node introduces mark as visited
+        - otherwise, do nothing in this node
+    - if the node is a leaf, introduce any vars not in the visited set
+*/
+fn construct_intermediate_rep<'a>(
+    node: &ASTNode<'a>,
+    references: &mut HashMap<ASTNode<'a>, HashSet<Variable<'a>>>,
+    visited: &mut HashSet<Variable<'a>>,
+) -> IntermediateNode<'a> {
+    match node {
+        ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation) => {
+            // if src & dest both in visited, return LeafNode
+            // if one of them is, return binding of that node with LeafNode as body
+            // if neither of them are, return binding of dest, then src, then LeafNode as body
+            let body = IntermediateNode::FlowsTo(obligation.clone());
+
+            // TODO:
+            // one, you need to fix the body declaration since it could also be control flow
+            // two, I wonder if there's a more recursive way of doing this -- perhaps a recursive helper?
+            // going through all of the permutations is going to get ugly (9 possibilities!) for through
+            // the issue with recursion may be that you have to be careful about the order of introduction
+            // (e.g., how dest comes before src).
+            // but wait, for through this may not even matter because of how we call always_happens_before...
+            // (on all the nodes marked a thing)
+            if visited.contains(&obligation.src) && visited.contains(&obligation.dest) {
+                body
+            } else if visited.contains(&obligation.src) {
+                IntermediateNode::Binding(Box::new(
+                    BindingBody {
+                        variable: obligation.src,
+                        body
+                    }))
+            } else if visited.contains(&obligation.dest) {
+                IntermediateNode::Binding(Box::new(
+                    BindingBody {
+                        variable: obligation.dest,
+                        body
+                    }))
+            } else {
+                IntermediateNode::Binding(Box::new(
+                    BindingBody {
+                        variable: obligation.dest,
+                        body: IntermediateNode::Binding(Box::new(
+                            BindingBody {
+                                variable: obligation.src,
+                                body
+                            }
+                        ))
+                    }))
             }
         },
-        ASTNode::Conditional(conditional_data) => {
-            match &conditional_data.premise {
-                ASTNode::FlowsTo(premise_ob) => {
-                    map.insert("src_var", premise_ob.src.name);
-                    map.insert("dest_var", premise_ob.dest.name);
-
-                    // we'll introduce these variables in the if-specific templates,
-                    // so no need for an introduce_variable call
-                    // mark them as visited to avoid redundant introductions
-                    visited.insert(premise_ob.src.clone());
-                    visited.insert(premise_ob.dest.clone());
-
-                    let body_text = traverse_ast(
-                        handlebars,
-                        &conditional_data.obligation,
-                        bindings,
-                        visited,
-                        registered_templates,
-                        num_vars_introduced,
-                    );
-
-                    let parens = ")".repeat(*num_vars_introduced);
-                    let obligation_body = format!("{body_text}{parens}");
-
-                    map.insert("obligation", &obligation_body);
-
-                    let src_binding = find_variable(bindings, &premise_ob.src);
-                    let dest_binding = find_variable(bindings, &premise_ob.dest);
-                    match (src_binding.quantifier, dest_binding.quantifier) {
-                        (Quantifier::Some, Quantifier::Some) => register_and_render_template(
-                            handlebars,
-                            &mut map,
-                            registered_templates,
-                            IF_FLOWS_TO_SOME_SOME,
-                        ),
-                        _ => todo!(),
-                    }
-                }
-                _ => todo!(),
-            }
-        }
+        ASTNode::Through(obligation) => {
+            todo!();
+        },
+        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Conditional(obligation) => {
+            todo!();
+        },
     }
 }
 
@@ -413,25 +401,19 @@ fn compile_ast<'a>(
     bindings: &Vec<VariableBinding>,
     registered_templates: &mut HashSet<&'a str>,
 ) -> String {
-    let mut visited: HashSet<Variable<'a>> = HashSet::new();
-    let mut num_vars_introduced: usize = 0;
-    let res = traverse_ast(
-        handlebars,
+    let mut references: HashMap<ASTNode<'a>, HashSet<Variable<'a>>> = HashMap::new();
+    determine_var_scope(
         &node,
-        bindings,
-        &mut visited,
-        registered_templates,
-        &mut num_vars_introduced,
+        &mut references,
     );
-    // janky way of closing parentheses at the very end
-    // this will be removed soon
-    match node {
-        ASTNode::Conjunction(_) => {
-            let parens = ")".repeat(num_vars_introduced);
-            format!("{res}{parens}")
-        }
-        _ => res,
-    }
+    let mut visited: HashSet<Variable<'a>> = HashSet::new();
+    construct_intermediate_rep(
+        &node,
+        &mut references,
+        &mut visited,
+    );
+
+    // TODO some kind of error checking that vars in policy = vars in bindings
 }
 
 fn compile_policy<'a>(
@@ -444,7 +426,7 @@ fn compile_policy<'a>(
     // register all the templates up front, regardless of whether you use them
     let mut registered_templates: HashSet<&str> = HashSet::new();
 
-    let scope_res = compile_scope(
+    let scope_res = compile_policy_scope(
         handlebars,
         policy_body.scope,
         &bindings,
