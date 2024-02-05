@@ -73,6 +73,8 @@ policy!(community_prop, ctx {
     Ok(())
 });
 
+// this is a more generous version of the policy that allows different dc/bcs to authorize each sink
+// this is the version we check in the eurosys paper
 policy!(instance_prop, ctx {
     let user_read = marker!(db_user_read);
     let db_read = marker!(db_read);
@@ -93,6 +95,8 @@ policy!(instance_prop, ctx {
                 .all_nodes_for_ctrl(*c_id)
                 .filter(|n| ctx.has_marker(instance_ban_check, *n));
 
+            // todo this actually doesn't match the semantics of the cnl
+            // which says that 
             let delete_ok = delete_checks.any(|auth| ctx.has_ctrl_flow_influence(auth, sink));
             let ban_ok = ban_checks.any(|auth| ctx.has_ctrl_flow_influence(auth, sink));
             let ok = delete_ok && ban_ok;
@@ -101,6 +105,58 @@ policy!(instance_prop, ctx {
             if !ok {
                 bail!("Found a failure");
             }
+        }
+    }
+
+    Ok(())
+});
+
+// this is the version matching the cnl -- the *same* dc/bc needs to have cf on *all* of the sinks in a ctrler
+// not entirely optimized (e.g., you could just group sinks together rather than checking read/writes)
+// I'm trying to match more closely what the compiler could output, at least for now
+policy!(instance_prop, ctx {
+    let user_read = marker!(db_user_read);
+    let db_read = marker!(db_read);
+    let db_write = marker!(db_write);
+    let instance_delete_check = marker!(instance_delete_check);
+    let instance_ban_check = marker!(instance_ban_check);
+
+    for c_id in ctx.desc().controllers.keys() {
+
+        let mut writes = 
+            ctx
+            .all_nodes_for_ctrl(*c_id)
+            .filter(|n| ctx.has_marker(db_write, *n));
+
+        let mut reads =
+            ctx
+            .all_nodes_for_ctrl(*c_id)
+            .filter(|n| ctx.has_marker(db_read, *n) && !ctx.has_marker(user_read, *n))
+
+        let mut delete_checks =
+            ctx.all_nodes_for_ctrl(*c_id)
+            .filter(|n| ctx.has_marker(instance_delete_check, *n));
+
+        let mut ban_checks = ctx
+            .all_nodes_for_ctrl(*c_id)
+            .filter(|n| ctx.has_marker(instance_ban_check, *n));
+
+        let delete_ok = delete_checks.any(|dc| {
+            reads.all(|read| ctx.has_ctrl_flow_influence(dc, read)) &&
+            writes.all(|write| ctx.has_ctrl_flow_influence(dc, write))
+        });
+
+        let ban_ok = ban_checks.any(|bc| {
+            reads.all(|read| ctx.has_ctrl_flow_influence(bc, read)) &&
+            writes.all(|write| ctx.has_ctrl_flow_influence(bc, write))
+        });
+        
+        let ok = delete_ok && ban_ok;
+
+        assert_error!(ctx, ok, "Missing ban or delete check for instance authorization");
+        if !ok {
+            bail!("Found a failure");
+        }
         }
     }
 
