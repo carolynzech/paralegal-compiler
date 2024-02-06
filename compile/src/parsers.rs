@@ -232,24 +232,20 @@ fn scope(s: &str) -> Res<&str, PolicyScope> {
     Ok((remainder, res.into()))
 }
 
-fn variable_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> { 
+// parses <quantifier> <var> : <marker> (
+fn variable_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
     let mut combinator = context(
         "variable binding",
-        delimited(
+        tuple((
+            quantifier,
+            variable,
+            colon,
             multispace0,
-            tuple((
-                quantifier,
-                variable,
-                colon,
-                multispace0,
-                marker,
-                multispace0,
-                open_paren
-            )),
-            multispace0
-        )
+            marker,
+            open_paren
+        ))
     );
-    let (remainder, (quantifier, variable, _, _, marker, _, _)) = combinator(s)?;
+    let (remainder, (quantifier, variable, _, _, marker, _)) = combinator(s)?;
     Ok((
         remainder,
         VariableBinding {
@@ -260,24 +256,90 @@ fn variable_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
     ))
 }
 
-// parses 
-fn chained_bodies<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+/*
+parses a single variable declaration whose body is either a leaf or chained leaves
+(so not a variable declaration that contains a nested variable declaration)
+e.g.:
+all write : "db_write" (
+    dc has control flow influence on write
+)
+*/
+fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
     let mut combinator = context(
-        "chained bodies",
-        terminated(
-            pair(
-                variable_binding,
-                alt((
-                    leaf_expr,
-                    chained_leaf_exprs,
-                    chained_bodies // uhh infinite recursion? think it's maybe ok bc we try the leaf cases first but I'm suspicious
+        "variable clause",
+        delimited(
+            multispace0,
+                tuple((
+                    variable_binding,
+                    alt((
+                        // lemmy community doesn't work bc there's no way of dealing w/
+                        // nested clause inside an implication, just leaf exprs
+                        chained_leaf_exprs,
+                        leaf_expr,
+                    )),
+                    close_paren
                 )),
-            ),
-            // opt bc a recursive call may get to it before we get out here
-            opt(close_paren)
+            multispace0
         )
     );
-    let (remainder, (binding, body)) = combinator(s)?;
+    let (remainder, (binding, body, _)) = combinator(s)?;
+
+    Ok((
+        remainder,
+        ASTNode::VarIntroduction(
+            Box::new(
+                VariableClause {
+                    binding,
+                    body
+                }
+            )
+        )
+    ))
+}
+
+// parses variable clauses connected by and/or/implies
+fn chained_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "chained clauses",
+        map(
+            // todo this is identical to the chained_leaf_expressions except "chained_bodies" 
+            // in the pair instead -- write a function to return this closure to reduce code reuse
+            pair(variable_clause, many0(tuple((and_or_implies, variable_clause)))),
+            |(first_expr, term_then_expr_vec)| {
+                term_then_expr_vec
+                    .into_iter()
+                    .fold(first_expr, |acc, (term, next_expr)| {
+                        let data : Box<TwoNodeObligation<'a>> = Box::new(
+                            TwoNodeObligation {
+                                src: acc,
+                                dest: next_expr,
+                            });
+                        let term_type : TermLink = term.into();
+                        match term_type {
+                            TermLink::And => ASTNode::And(data),
+                            TermLink::Or => ASTNode::Or(data),
+                            TermLink::Implies => ASTNode::Implies(data),
+                        }
+                    })
+            },
+        ),
+    );
+    let (remainder, res) = combinator(s)?;
+    Ok((remainder, res))
+}
+
+// same as variable_clause, but allows body to be other variable clauses
+// instead of just leaf expressions
+fn wrapped_chained_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "parse variable intro wrapping around chained clauses",
+        tuple((
+            variable_binding,
+            chained_clauses,
+            close_paren
+        ))
+    );
+    let (remainder, (binding, body, _)) = combinator(s)?;
     Ok((
         remainder,
         ASTNode::VarIntroduction(
@@ -303,42 +365,50 @@ format of body is now:
     - ^^ present >=1 time, joined by chained exprs/implies
 */
 
+/*
+wrapped_chained_clauses takes care of multiple variable clauses wrapped in a top-level binding
+still need to take care of the fact that those expressions can *too* 
+be joined by and/or/implies
+*/ 
 fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "parse body",
         map(
-            // TODO I don't think many0(and_or_implies is right here?)
-            // todo this is identical to the chained_leaf_expressions except "chained_bodies" 
-            // in the pair instead -- write a function to return this closure to reduce code reuse
-            pair(chained_bodies, many0(tuple((and_or_implies, chained_bodies)))),
-            |(first_expr, term_then_expr_vec)| {
-                term_then_expr_vec
-                    .into_iter()
-                    .fold(first_expr, |acc, (term, next_expr)| {
-                        let data : Box<TwoNodeObligation<'a>> = Box::new(
-                            TwoNodeObligation {
-                                src: acc,
-                                dest: next_expr,
-                            });
-                        let term_type : TermLink = term.into();
-                        match term_type {
-                            TermLink::And => ASTNode::And(data),
-                            TermLink::Or => ASTNode::Or(data),
-                            TermLink::Implies => ASTNode::Implies(data),
-                        }
-                    })
+        // todo this is identical to the chained_leaf_expressions except "chained_bodies" 
+        // in the pair instead -- write a function to return this closure to reduce code reuse
+        pair(wrapped_chained_clauses, many0(tuple((and_or_implies, wrapped_chained_clauses)))),
+        |(first_expr, term_then_expr_vec)| {
+            term_then_expr_vec
+                .into_iter()
+                .fold(first_expr, |acc, (term, next_expr)| {
+                    let data : Box<TwoNodeObligation<'a>> = Box::new(
+                        TwoNodeObligation {
+                            src: acc,
+                            dest: next_expr,
+                        });
+                    let term_type : TermLink = term.into();
+                    match term_type {
+                        TermLink::And => ASTNode::And(data),
+                        TermLink::Or => ASTNode::Or(data),
+                        TermLink::Implies => ASTNode::Implies(data),
+                    }
+                })
             },
-        ),
+        )
     )(s)
 }
 
+// TODO doesn't allow for >2 variable introductions next to each other
+// TODO should force policy writers to specify and/or precedence w. parentheses if both and/or are in policy
+// TODO allow for wrapped chained clauses to be anded with each other
+
 pub fn parse<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
     let mut combinator = context("parse policy", 
-        // all_consuming(
+        all_consuming(
             tuple((
-                scope, chained_bodies
+                scope, parse_body
             ))
-        // )
+        )
     );
     let (remainder, (scope, body)) = combinator(s)?;
     Ok((
