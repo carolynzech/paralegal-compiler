@@ -54,7 +54,7 @@ lazy_static! {
     - better separate concerns in this repository (break up parsers into multiple files, etc.)
 */
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Hash)]
 pub enum Quantifier {
     Some,
     All,
@@ -105,16 +105,18 @@ pub struct TwoVarObligation<'a> {
     dest: Variable<'a>,
 }
 #[derive(Debug, PartialEq, Eq)]
-pub enum Conjunction {
+pub enum TermLink {
     And,
     Or,
+    Implies,
 }
 
-impl From<&str> for Conjunction {
+impl From<&str> for TermLink {
     fn from(s: &str) -> Self {
         match s {
-            "and" => Conjunction::And,
-            "or" => Conjunction::Or,
+            "and" => TermLink::And,
+            "or" => TermLink::Or,
+            "implies" => TermLink::Implies,
             &_ => unimplemented!("no other conjunctions supported"),
         }
     }
@@ -134,20 +136,27 @@ pub struct ThreeVarObligation<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
+pub struct VariableBinding<'a> {
+    variable: Variable<'a>,
+    quantifier: Quantifier,
+    marker: &'a str,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct VariableClause<'a> {
+    binding: VariableBinding<'a>,
+    body: ASTNode<'a>
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ASTNode<'a> {
     FlowsTo(TwoVarObligation<'a>),
     ControlFlow(TwoVarObligation<'a>),
     Through(ThreeVarObligation<'a>),
     And(Box<TwoNodeObligation<'a>>),
     Or(Box<TwoNodeObligation<'a>>),
-    Conditional(Box<TwoNodeObligation<'a>>),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
-pub struct VariableBinding<'a> {
-    variable: Variable<'a>,
-    quantifier: Quantifier,
-    marker: &'a str,
+    Implies(Box<TwoNodeObligation<'a>>),
+    VarIntroduction(Box<VariableClause<'a>>)
 }
 
 fn func_call(q: &Quantifier) -> &str {
@@ -158,6 +167,7 @@ fn func_call(q: &Quantifier) -> &str {
     }
 }
 
+/*
 fn register_and_render_template<'a, T: serde::Serialize, U: serde::Serialize>(
     handlebars: &mut Handlebars,
     map: &mut HashMap<T, U>,
@@ -180,12 +190,12 @@ fn register_and_render_template<'a, T: serde::Serialize, U: serde::Serialize>(
 fn compile_policy_scope<'a>(
     handlebars: &mut Handlebars,
     scope: PolicyScope,
-    bindings: &Vec<VariableBinding>,
+    bindings: &Vec<VariableClause>,
     mut registered_templates: &mut HashSet<&'a str>,
 ) -> String {
     match scope {
         PolicyScope::Always => {
-            let mut map: HashMap<&str, Vec<VariableBinding>> = HashMap::new();
+            let mut map: HashMap<&str, Vec<VariableClause>> = HashMap::new();
             map.insert("bindings", bindings.to_vec());
 
             register_and_render_template(
@@ -200,48 +210,6 @@ fn compile_policy_scope<'a>(
         }
     }
 }
-
-/*
-wait... but if the same node is opening & closing two variables, 
-how do you know which should be nested inside the other
- -- think b/c of this "same object" rule we've established, the *object*
- always goes first, e.g.
-    A flows to B
-    A has control flow influence on B
-introduce B first, then A, because we need to establish B as *an* object
-before we talk about A
-
-
-minimum example:
-all passwords flow to some encrypts and
-all passwords flow to some encrypts
-
-let [passwords, encrypts] (
-    FlowsTo(passwords, encrypts) &&
-    FlowsTo(passwords, encrypts)
-)
-
-if we compile to:
-all passwords | some encrypts | flows_to(passwords, encrypts)
-that's wrong (needs to be the same encrypts object), but
-some encrypts | all passwords | flows_to(passwords, encrypts)
-is correct
-
-(this works)
-all passwords flow to some encrypts1 and
-all private_keys flow to some encrypts2
-
-some encrypts1 | all passwords | flows_to(passwords, encrypts1) &&
-some encrypts2 | all private_keys | flows_to(passwords, encrypts2)
-*/
-
-/*
-STEP 1:
-create a hashmap of ASTNode --> set of Variables they reference
-traverse tree until you reach a leaf (flows to / control flow)
-at that point, make first entry in hashmap
-in non-leaf nodes, their entries should be the unique set of their children's results
-*/
 
 fn unionize_var_sets<'a>(left_set : &HashSet<Variable<'a>>, right_set: &HashSet<Variable<'a>>, union: &mut HashSet<Variable<'a>>) {
     let ref_union: HashSet<&Variable<'a>> = left_set.union(&right_set).collect();
@@ -265,7 +233,7 @@ fn determine_var_scope<'a>(
         ASTNode::Through(obligation) => {
             references[node] = HashSet::from([obligation.src, obligation.dest, obligation.checkpoint]);
         },
-        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Conditional(obligation) => {
+        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Implies(obligation) => {
             determine_var_scope(&obligation.src, references);
             determine_var_scope(&obligation.dest, references);
             
@@ -311,7 +279,7 @@ let [encrypts] (
 
 enum IntermediateNode<'a> {
     Binding(Box<BindingBody<'a>>),
-    Conditional(Box<NonLeafNodeBody<'a>>),
+    Implies(Box<NonLeafNodeBody<'a>>),
     And(Box<NonLeafNodeBody<'a>>),
     Or(Box<NonLeafNodeBody<'a>>),
     FlowsTo(TwoVarObligation<'a>),
@@ -389,7 +357,7 @@ fn construct_intermediate_rep<'a>(
         ASTNode::Through(obligation) => {
             todo!();
         },
-        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Conditional(obligation) => {
+        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Implies(obligation) => {
             todo!();
         },
     }
@@ -398,7 +366,7 @@ fn construct_intermediate_rep<'a>(
 fn compile_ast<'a>(
     handlebars: &mut Handlebars,
     node: ASTNode<'a>,
-    bindings: &Vec<VariableBinding>,
+    bindings: &Vec<VariableClause>,
     registered_templates: &mut HashSet<&'a str>,
 ) -> String {
     let mut references: HashMap<ASTNode<'a>, HashSet<Variable<'a>>> = HashMap::new();
@@ -419,7 +387,7 @@ fn compile_ast<'a>(
 fn compile_policy<'a>(
     handlebars: &mut Handlebars,
     policy_body: PolicyBody<'a>,
-    bindings: Vec<VariableBinding>,
+    bindings: Vec<VariableClause>,
 ) -> Result<()> {
     let mut map: HashMap<&str, &str> = HashMap::new();
     // TODO: it may be easier to understand this codebase if you just
@@ -454,8 +422,10 @@ fn compile_policy<'a>(
     Ok(())
 }
 
-pub fn compile<'a>(policy_body: PolicyBody<'a>, env: Vec<VariableBinding>) -> Result<()> {
+pub fn compile<'a>(policy_body: PolicyBody<'a>, env: Vec<VariableClause>) -> Result<()> {
     let mut handlebars = Handlebars::new();
     handlebars.register_escape_fn(no_escape);
     compile_policy(&mut handlebars, policy_body, env)
 }
+
+*/

@@ -1,4 +1,6 @@
-let sensitive = all "private_key"
-let encrypts = some "encrypt_func"
-
-sensitive flows to encrypts
+Always:
+all sens : "sensitive" (
+    some encrypts : "encrypts" (
+        sensitive flows to encrypts
+    )
+)

@@ -1,8 +1,8 @@
 use std::env;
 use std::fs;
 
-use compile::compile;
-use compile::parsers::{parse_bindings, parse_body};
+// use compile::compile;
+use compile::parsers::parse;
 use std::io::Result;
 
 fn run(args: &Vec<String>) -> Result<()> {
@@ -14,20 +14,23 @@ fn run(args: &Vec<String>) -> Result<()> {
         .expect("Could not read policy file")
         .to_lowercase();
 
-    let bindings_res = parse_bindings(&policy);
-    match bindings_res {
-        Ok((remainder, bindings)) => {
-            // let mut env: HashMap<String, (Quantifier, String)> = HashMap::new();
-            // construct_env(bindings, &mut env);
-            let body_res = parse_body(remainder);
-            // dbg!(&body_res)
-            match body_res {
-                Ok((_, policy_body)) => compile(policy_body, bindings)?,
-                Err(e) => panic!("{}", e),
-            }
-        }
-        Err(e) => panic!("{}", e),
-    };
+    let res = parse(&policy);
+    dbg!(&res);
+
+    // let bindings_res = parse_bindings(&policy);
+    // match bindings_res {
+    //     Ok((remainder, bindings)) => {
+    //         // let mut env: HashMap<String, (Quantifier, String)> = HashMap::new();
+    //         // construct_env(bindings, &mut env);
+    //         let body_res = parse_body(remainder);
+    //         // dbg!(&body_res)
+    //         match body_res {
+    //             Ok((_, policy_body)) => compile(policy_body, bindings)?,
+    //             Err(e) => panic!("{}", e),
+    //         }
+    //     }
+    //     Err(e) => panic!("{}", e),
+    // };
 
     Ok(())
 }

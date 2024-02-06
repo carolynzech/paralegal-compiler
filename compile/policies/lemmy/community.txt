@@ -1,12 +1,19 @@
-let community_struct = some "community"
-let delete_check = some "community_delete_check"
-let ban_check = some "community_ban_check"
-let write = some "db_write"
-
 Always:
-If community_struct flows to write,
-then 
-community_struct flows to delete_check and 
-delete_check has control flow influence on write and
-community_struct flows to ban_check and
-ban_check has control flow influence on write
+some comm_data : "community_data" (
+   all write : "db_write" (
+        comm_data flows to write
+        implies (
+            some comm_dc : "community_delete_check" (
+                comm_data flows to comm_dc
+                and
+                comm_dc has control flow influence on write
+            )
+            and
+            some comm_bc : "community_ban_check" (
+                comm_data flows to comm_bc
+                and
+                comm_bc has control flow influence on write
+            )
+        )
+   )
+)
