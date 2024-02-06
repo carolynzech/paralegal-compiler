@@ -181,7 +181,7 @@ fn control_flow_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 
 fn leaf_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
-        "parse expr",
+        "parse leaf expr",
         alt((control_flow_expr, flows_to_or_through_expr)),
     )(s)
 }
@@ -193,34 +193,13 @@ fn and_or_implies<'a>(s: &'a str) -> Res<&str, &'a str> {
     Ok((remainder, term))
 }
 
-/* parse <leaf> and/or/implies <leaf> and/or/implies...
-e.g.:
-"community_data" flows to "community_delete_check"
-and
-"community_delete_check" has control flow influence on "db_write"
-*/
+
 fn chained_leaf_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "parse chained leaf expressions",
         map(
             pair(leaf_expr, many0(tuple((and_or_implies, leaf_expr)))),
-            |(first_expr, term_then_expr_vec)| {
-                term_then_expr_vec
-                    .into_iter()
-                    .fold(first_expr, |acc, (term, next_expr)| {
-                        let data : Box<TwoNodeObligation<'a>> = Box::new(
-                            TwoNodeObligation {
-                                src: acc,
-                                dest: next_expr,
-                            });
-                        let term_type : TermLink = term.into();
-                        match term_type {
-                            TermLink::And => ASTNode::And(data),
-                            TermLink::Or => ASTNode::Or(data),
-                            TermLink::Implies => ASTNode::Implies(data),
-                        }
-                    })
-            },
+            accumulator()
         ),
     )(s)
 }
@@ -230,6 +209,26 @@ fn scope(s: &str) -> Res<&str, PolicyScope> {
     let (remainder, res) = combinator(s)?;
 
     Ok((remainder, res.into()))
+}
+
+fn accumulator<'a>() -> Box<dyn Fn((ASTNode<'a>, Vec<(&str, ASTNode<'a>)>)) -> ASTNode<'a>> {
+    Box::new(|(first_expr, term_then_expr_vec)| {
+        term_then_expr_vec
+            .into_iter()
+            .fold(first_expr, |acc, (term, next_expr)| {
+                let data : Box<TwoNodeObligation<'a>> = Box::new(
+                    TwoNodeObligation {
+                        src: acc,
+                        dest: next_expr,
+                    });
+                let term_type : TermLink = term.into();
+                match term_type {
+                    TermLink::And => ASTNode::And(data),
+                    TermLink::Or => ASTNode::Or(data),
+                    TermLink::Implies => ASTNode::Implies(data),
+                }
+            })
+    })
 }
 
 // parses <quantifier> <var> : <marker> (
@@ -256,86 +255,12 @@ fn variable_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
     ))
 }
 
-/*
-parses a single variable declaration whose body is either a leaf or chained leaves
-(so not a variable declaration that contains a nested variable declaration)
-e.g.:
-all write : "db_write" (
-    dc has control flow influence on write
-)
-*/
-fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+fn exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "variable clause",
-        delimited(
-            multispace0,
-                tuple((
-                    variable_binding,
-                    alt((
-                        // lemmy community doesn't work bc there's no way of dealing w/
-                        // nested clause inside an implication, just leaf exprs
-                        chained_leaf_exprs,
-                        leaf_expr,
-                    )),
-                    close_paren
-                )),
-            multispace0
-        )
-    );
-    let (remainder, (binding, body, _)) = combinator(s)?;
-
-    Ok((
-        remainder,
-        ASTNode::VarIntroduction(
-            Box::new(
-                VariableClause {
-                    binding,
-                    body
-                }
-            )
-        )
-    ))
-}
-
-// parses variable clauses connected by and/or/implies
-fn chained_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "chained clauses",
-        map(
-            // todo this is identical to the chained_leaf_expressions except "chained_bodies" 
-            // in the pair instead -- write a function to return this closure to reduce code reuse
-            pair(variable_clause, many0(tuple((and_or_implies, variable_clause)))),
-            |(first_expr, term_then_expr_vec)| {
-                term_then_expr_vec
-                    .into_iter()
-                    .fold(first_expr, |acc, (term, next_expr)| {
-                        let data : Box<TwoNodeObligation<'a>> = Box::new(
-                            TwoNodeObligation {
-                                src: acc,
-                                dest: next_expr,
-                            });
-                        let term_type : TermLink = term.into();
-                        match term_type {
-                            TermLink::And => ASTNode::And(data),
-                            TermLink::Or => ASTNode::Or(data),
-                            TermLink::Implies => ASTNode::Implies(data),
-                        }
-                    })
-            },
-        ),
-    );
-    let (remainder, res) = combinator(s)?;
-    Ok((remainder, res))
-}
-
-// same as variable_clause, but allows body to be other variable clauses
-// instead of just leaf expressions
-fn wrapped_chained_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "parse variable intro wrapping around chained clauses",
+        "exprs",
         tuple((
             variable_binding,
-            chained_clauses,
+            alt((parse_body, exprs, chained_leaf_exprs)),
             close_paren
         ))
     );
@@ -343,72 +268,33 @@ fn wrapped_chained_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     Ok((
         remainder,
         ASTNode::VarIntroduction(
-            Box::new(
-                VariableClause {
-                    binding,
-                    body
-                }
-            )
+            Box::new(VariableClause {
+                binding,
+                body
+            })
         )
     ))
 }
 
-/*
-format of body is now:
-    - variable intro (quantifier + marker + open paren)
-        - alt(
-            - leaf (flows to / control flow / through)
-            - chained leaf expressions
-            - body contained within (recursive case)
-          )
-    - close paren
-    - ^^ present >=1 time, joined by chained exprs/implies
-*/
-
-/*
-wrapped_chained_clauses takes care of multiple variable clauses wrapped in a top-level binding
-still need to take care of the fact that those expressions can *too* 
-be joined by and/or/implies
-*/ 
 fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "parse body",
         map(
-        // todo this is identical to the chained_leaf_expressions except "chained_bodies" 
-        // in the pair instead -- write a function to return this closure to reduce code reuse
-        pair(wrapped_chained_clauses, many0(tuple((and_or_implies, wrapped_chained_clauses)))),
-        |(first_expr, term_then_expr_vec)| {
-            term_then_expr_vec
-                .into_iter()
-                .fold(first_expr, |acc, (term, next_expr)| {
-                    let data : Box<TwoNodeObligation<'a>> = Box::new(
-                        TwoNodeObligation {
-                            src: acc,
-                            dest: next_expr,
-                        });
-                    let term_type : TermLink = term.into();
-                    match term_type {
-                        TermLink::And => ASTNode::And(data),
-                        TermLink::Or => ASTNode::Or(data),
-                        TermLink::Implies => ASTNode::Implies(data),
-                    }
-                })
-            },
+            pair(exprs, many0(tuple((and_or_implies, exprs)))),
+            accumulator()
         )
     )(s)
 }
 
-// TODO doesn't allow for >2 variable introductions next to each other
 // TODO should force policy writers to specify and/or precedence w. parentheses if both and/or are in policy
-// TODO allow for wrapped chained clauses to be anded with each other
 
 pub fn parse<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
     let mut combinator = context("parse policy", 
-        all_consuming(
+        // all_consuming(
             tuple((
                 scope, parse_body
             ))
-        )
+        // )
     );
     let (remainder, (scope, body)) = combinator(s)?;
     Ok((
