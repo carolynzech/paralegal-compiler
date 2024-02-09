@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
-    character::complete::{char, multispace0},
+    character::complete::{char, multispace0, multispace1},
     combinator::{all_consuming, map, not, opt, recognize},
     error::{context, VerboseError},
     multi::{many0, many1},
@@ -10,7 +10,7 @@ use nom::{
 };
 
 use crate::{
-    ASTNode, TermLink, TwoNodeObligation, PolicyBody, PolicyScope, Quantifier, ThreeVarObligation, TwoVarObligation, Variable, VariableBinding, VariableClause
+    ASTNode, Operator, TwoNodeObligation, PolicyBody, PolicyScope, Quantifier, ThreeVarObligation, TwoVarObligation, Variable, VariableBinding, VariableClause
 };
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -19,67 +19,67 @@ static FLOWS_TO_TAG: &str = "flows to";
 static CONTROL_FLOW_TAG: &str = "has control flow influence on";
 
 fn colon(s: &str) -> Res<&str, &str> {
-    context("colon", tag(":"))(s)
+    context("colon", delimited(multispace0, tag(":"), multispace0))(s)
 }
 
 fn flows_to(s: &str) -> Res<&str, &str> {
-    context("flows to", terminated(tag(FLOWS_TO_TAG), multispace0))(s)
+    context("flows to", delimited(multispace1, tag(FLOWS_TO_TAG), multispace1))(s)
 }
 
 fn control_flow(s: &str) -> Res<&str, &str> {
     context(
         "control flow",
-        terminated(tag(CONTROL_FLOW_TAG), multispace0),
+        delimited(multispace1, tag(CONTROL_FLOW_TAG), multispace1),
     )(s)
 }
 
 fn through(s: &str) -> Res<&str, &str> {
-    context("through", terminated(tag("through"), multispace0))(s)
+    context("through", delimited(multispace1, tag("through"), multispace1))(s)
 }
 
 fn always(s: &str) -> Res<&str, &str> {
     context(
         "always",
-        terminated(terminated(tag("always"), colon), multispace0),
+        delimited(multispace0, tag("always"), colon),
     )(s)
 }
 
 fn sometimes(s: &str) -> Res<&str, &str> {
     context(
         "sometimes",
-        terminated(terminated(tag("sometimes"), colon), multispace0),
+        delimited(multispace0, tag("sometimes"), colon),
     )(s)
 }
 
 fn and(s: &str) -> Res<&str, &str> {
-    context("and", terminated(tag("and"), multispace0))(s)
+    context("and", delimited(multispace0, tag("and"), multispace1))(s)
 }
 
 fn or(s: &str) -> Res<&str, &str> {
-    context("or", terminated(tag("or"), multispace0))(s)
+    context("or", delimited(multispace0, tag("or"), multispace1))(s)
 }
 
 fn implies(s: &str) -> Res<&str, &str> {
-    context("implies", terminated(tag("implies"), multispace0))(s)
+    context("implies", delimited(multispace0, tag("implies"), multispace1))(s)
 }
 
 fn open_paren(s: &str) -> Res<&str, &str> {
-    context("open paren", terminated(tag("("), multispace0))(s)
+    context("open paren", delimited(multispace0, tag("("), multispace0))(s)
 }
 
 fn close_paren(s: &str) -> Res<&str, &str> {
-    context("close paren", terminated(tag(")"), multispace0))(s)
+    context("close paren", delimited(multispace0, tag(")"), multispace0))(s)
 }
 
 fn some(s: &str) -> Res<&str, Quantifier> {
-    let mut combinator = context("some", terminated(tag("some"), multispace0));
+    let mut combinator = context("some", delimited(multispace0, tag("some"), multispace1));
     let (remainder, _) = combinator(s)?;
 
     Ok((remainder, Quantifier::Some))
 }
 
 fn all(s: &str) -> Res<&str, Quantifier> {
-    let mut combinator = context("all", terminated(tag("all"), multispace0));
+    let mut combinator = context("all", delimited(multispace0, tag("all"), multispace1));
     let (remainder, _) = combinator(s)?;
 
     Ok((remainder, Quantifier::All))
@@ -104,10 +104,7 @@ fn alphabetic_w_underscores(s: &str) -> Res<&str, &str> {
 fn marker<'a>(s: &'a str) -> Res<&str, &'a str> {
     let (remainder, res) = context(
         "marker",
-        terminated(
-            delimited(tag("\""), alphabetic_w_underscores, tag("\"")),
-            multispace0,
-        ),
+        delimited(tag("\""), alphabetic_w_underscores, tag("\""))
     )(s)?;
     Ok((remainder, res))
 }
@@ -115,7 +112,7 @@ fn marker<'a>(s: &'a str) -> Res<&str, &'a str> {
 fn variable<'a>(s: &'a str) -> Res<&str, Variable<'a>> {
     let (remainder, res) = context(
         "variable",
-        terminated(alphabetic_w_underscores, multispace0),
+        alphabetic_w_underscores,
     )(s)?;
     Ok((remainder, Variable { name: res }))
 }
@@ -179,29 +176,11 @@ fn control_flow_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-fn leaf_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context(
-        "parse leaf expr",
-        alt((control_flow_expr, flows_to_or_through_expr)),
-    )(s)
-}
-
 // parse "and/or/implies <leaf expr>"
-fn and_or_implies<'a>(s: &'a str) -> Res<&str, &'a str> {
+fn operator<'a>(s: &'a str) -> Res<&str, Operator> {
     let mut combinator = context("parse conjunction expr", alt((and, or, implies)));
-    let (remainder, term) = combinator(s)?;
-    Ok((remainder, term))
-}
-
-
-fn chained_leaf_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context(
-        "parse chained leaf expressions",
-        map(
-            pair(leaf_expr, many0(tuple((and_or_implies, leaf_expr)))),
-            accumulator()
-        ),
-    )(s)
+    let (remainder, operator_str) = combinator(s)?;
+    Ok((remainder, operator_str.into()))
 }
 
 fn scope(s: &str) -> Res<&str, PolicyScope> {
@@ -211,78 +190,147 @@ fn scope(s: &str) -> Res<&str, PolicyScope> {
     Ok((remainder, res.into()))
 }
 
-fn accumulator<'a>() -> Box<dyn Fn((ASTNode<'a>, Vec<(&str, ASTNode<'a>)>)) -> ASTNode<'a>> {
-    Box::new(|(first_expr, term_then_expr_vec)| {
-        term_then_expr_vec
-            .into_iter()
-            .fold(first_expr, |acc, (term, next_expr)| {
-                let data : Box<TwoNodeObligation<'a>> = Box::new(
-                    TwoNodeObligation {
-                        src: acc,
-                        dest: next_expr,
-                    });
-                let term_type : TermLink = term.into();
-                match term_type {
-                    TermLink::And => ASTNode::And(data),
-                    TermLink::Or => ASTNode::Or(data),
-                    TermLink::Implies => ASTNode::Implies(data),
-                }
-            })
-    })
+fn joined_bodies<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "joined bodies",
+        tuple((
+            alt((flows_to_or_through_expr, control_flow_expr)), 
+            operator, 
+            body)),
+    );
+    let (remainder, (src, operator, dest)) = combinator(s)?;
+    let body = Box::new(TwoNodeObligation {src, dest});
+
+    let node = match operator {
+        Operator::And => ASTNode::And(body),
+        Operator::Or => ASTNode::Or(body),
+        Operator::Implies => ASTNode::Implies(body),
+    };
+
+    Ok((remainder, node))
 }
 
-// parses <quantifier> <var> : <marker> (
-fn variable_binding<'a>(s: &'a str) -> Res<&str, VariableBinding<'a>> {
-    let mut combinator = context(
-        "variable binding",
-        tuple((
-            quantifier,
-            variable,
-            colon,
-            multispace0,
-            marker,
-            open_paren
+fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "clause body",
+        alt((
+            joined_bodies,
+            flows_to_or_through_expr,
+            control_flow_expr,
         ))
-    );
-    let (remainder, (quantifier, variable, _, _, marker, _)) = combinator(s)?;
-    Ok((
-        remainder,
-        VariableBinding {
-            quantifier,
-            variable,
-            marker
-        }
-    ))
+    )(s)
 }
 
-fn exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn joined_variable_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "exprs",
+        "joined variable expressions",
         tuple((
-            variable_binding,
-            alt((parse_body, exprs, chained_leaf_exprs)),
-            close_paren
+            alt((clause_w_single_body, joined_bodies, body)),
+            operator, 
+            alt((joined_variable_clauses, variable_clause)),
+        )));
+    let (remainder, (src, operator, dest)) = combinator(s)?;
+    let body = Box::new(TwoNodeObligation {src, dest});
+
+    let node = match operator {
+        Operator::And => ASTNode::And(body),
+        Operator::Or => ASTNode::Or(body),
+        Operator::Implies => ASTNode::Implies(body),
+    };
+
+    Ok((remainder, node))
+}
+
+fn clause_w_single_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "variable clause",
+        tuple((
+            // first line; declare variable binding & open clause
+            quantifier,
+            terminated(variable, colon),
+            terminated(marker, open_paren),
+            // body of the clause & close clause
+            terminated(body, close_paren),
         ))
     );
-    let (remainder, (binding, body, _)) = combinator(s)?;
+    let (remainder, (quantifier, variable, marker, body)) = combinator(s)?;
+
     Ok((
         remainder,
         ASTNode::VarIntroduction(
             Box::new(VariableClause {
-                binding,
+                binding : VariableBinding {
+                    quantifier,
+                    variable,
+                    marker
+                },
                 body
             })
         )
     ))
 }
 
-fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context(
-        "parse body",
-        map(
-            pair(exprs, many0(tuple((and_or_implies, exprs)))),
-            accumulator()
+fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "variable clause",
+        tuple((
+            // first line; declare variable binding & open clause
+            quantifier,
+            terminated(variable, colon),
+            terminated(marker, open_paren),
+            // body of the clause & close clause
+            terminated(
+                    alt((joined_variable_clauses, variable_clause, body)), 
+                    close_paren
+            ),
+        ))
+    );
+    let (remainder, (quantifier, variable, marker, body)) = combinator(s)?;
+
+    Ok((
+        remainder,
+        ASTNode::VarIntroduction(
+            Box::new(VariableClause {
+                binding : VariableBinding {
+                    quantifier,
+                    variable,
+                    marker
+                },
+                body
+            })
         )
+    ))
+}
+
+fn joined_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "expr operator expr",
+        tuple((
+            alt((variable_clause, body)), 
+            operator, 
+            exprs
+        )),
+    );
+    let (remainder, (src, operator, dest)) = combinator(s)?;
+    let body = Box::new(TwoNodeObligation {src, dest});
+
+    let node = match operator {
+        Operator::And => ASTNode::And(body),
+        Operator::Or => ASTNode::Or(body),
+        Operator::Implies => ASTNode::Implies(body),
+    };
+
+    Ok((remainder, node))
+}
+
+fn exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "exprs",
+        alt((
+            joined_exprs,
+            variable_clause,
+            body,
+        ))
     )(s)
 }
 
@@ -290,11 +338,11 @@ fn parse_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 
 pub fn parse<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
     let mut combinator = context("parse policy", 
-        // all_consuming(
+        all_consuming(
             tuple((
-                scope, parse_body
+                scope, exprs
             ))
-        // )
+        )
     );
     let (remainder, (scope, body)) = combinator(s)?;
     Ok((

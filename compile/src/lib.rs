@@ -105,18 +105,18 @@ pub struct TwoVarObligation<'a> {
     dest: Variable<'a>,
 }
 #[derive(Debug, PartialEq, Eq)]
-pub enum TermLink {
+pub enum Operator {
     And,
     Or,
     Implies,
 }
 
-impl From<&str> for TermLink {
+impl From<&str> for Operator {
     fn from(s: &str) -> Self {
         match s {
-            "and" => TermLink::And,
-            "or" => TermLink::Or,
-            "implies" => TermLink::Implies,
+            "and" => Operator::And,
+            "or" => Operator::Or,
+            "implies" => Operator::Implies,
             &_ => unimplemented!("no other conjunctions supported"),
         }
     }
@@ -137,8 +137,8 @@ pub struct ThreeVarObligation<'a> {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct VariableBinding<'a> {
-    variable: Variable<'a>,
     quantifier: Quantifier,
+    variable: Variable<'a>,
     marker: &'a str,
 }
 
