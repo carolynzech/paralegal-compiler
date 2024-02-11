@@ -40,6 +40,7 @@ lazy_static! {
     - parentheses to change order that obligations are enforced (e.g., A and (B or C)))
     - add "In <controller name>" in addition to Always/Sometimes, meaning Paralegal should apply
       the policy to the controller with that name
+    - unbound variable errors (variables referenced in bodies that weren't declared)
     - “is authorized by” primitive as syntactic sugar
     - possible syntactic sugar for flows to / control flow influence
     - negation : "no quantifier" / "does not flow to"
@@ -89,15 +90,13 @@ impl From<&str> for PolicyScope {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct PolicyBody<'a> {
+pub struct Policy<'a> {
     scope: PolicyScope,
     body: ASTNode<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Serialize)]
-struct Variable<'a> {
-    name: &'a str,
-}
+pub type Variable<'a> = &'a str;
+pub type Marker<'a> = &'a str;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TwoVarObligation<'a> {
@@ -125,7 +124,7 @@ impl From<&str> for Operator {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct TwoNodeObligation<'a> {
     src: ASTNode<'a>,
-    dest: ASTNode<'a>
+    dest: ASTNode<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -139,7 +138,7 @@ pub struct ThreeVarObligation<'a> {
 pub struct VariableBinding<'a> {
     quantifier: Quantifier,
     variable: Variable<'a>,
-    marker: &'a str,
+    marker: Marker<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -386,7 +385,7 @@ fn compile_ast<'a>(
 
 fn compile_policy<'a>(
     handlebars: &mut Handlebars,
-    policy_body: PolicyBody<'a>,
+    policy_body: Policy<'a>,
     bindings: Vec<VariableClause>,
 ) -> Result<()> {
     let mut map: HashMap<&str, &str> = HashMap::new();
@@ -422,7 +421,7 @@ fn compile_policy<'a>(
     Ok(())
 }
 
-pub fn compile<'a>(policy_body: PolicyBody<'a>, env: Vec<VariableClause>) -> Result<()> {
+pub fn compile<'a>(policy_body: Policy<'a>, env: Vec<VariableClause>) -> Result<()> {
     let mut handlebars = Handlebars::new();
     handlebars.register_escape_fn(no_escape);
     compile_policy(&mut handlebars, policy_body, env)

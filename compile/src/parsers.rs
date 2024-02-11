@@ -2,15 +2,15 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{char, multispace0, multispace1},
-    combinator::{all_consuming, map, not, opt, recognize},
+    combinator::{all_consuming, not, opt, recognize},
     error::{context, VerboseError},
-    multi::{many0, many1},
-    sequence::{delimited, pair, separated_pair, terminated, tuple},
+    multi::many1,
+    sequence::{delimited, separated_pair, terminated, tuple},
     IResult,
 };
 
 use crate::{
-    ASTNode, Operator, TwoNodeObligation, PolicyBody, PolicyScope, Quantifier, ThreeVarObligation, TwoVarObligation, Variable, VariableBinding, VariableClause
+    ASTNode, Marker, Operator, TwoNodeObligation, Policy, PolicyScope, Quantifier, ThreeVarObligation, TwoVarObligation, Variable, VariableBinding, VariableClause
 };
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -101,7 +101,7 @@ fn alphabetic_w_underscores(s: &str) -> Res<&str, &str> {
     Ok((remainder, res))
 }
 
-fn marker<'a>(s: &'a str) -> Res<&str, &'a str> {
+fn marker<'a>(s: &'a str) -> Res<&str, Marker<'a>> {
     let (remainder, res) = context(
         "marker",
         delimited(tag("\""), alphabetic_w_underscores, tag("\""))
@@ -114,7 +114,7 @@ fn variable<'a>(s: &'a str) -> Res<&str, Variable<'a>> {
         "variable",
         alphabetic_w_underscores,
     )(s)?;
-    Ok((remainder, Variable { name: res }))
+    Ok((remainder, res))
 }
 
 fn flows_to_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
@@ -178,7 +178,7 @@ fn control_flow_expr<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 
 // parse "and/or/implies <leaf expr>"
 fn operator<'a>(s: &'a str) -> Res<&str, Operator> {
-    let mut combinator = context("parse conjunction expr", alt((and, or, implies)));
+    let mut combinator = context("operator", alt((and, or, implies)));
     let (remainder, operator_str) = combinator(s)?;
     Ok((remainder, operator_str.into()))
 }
@@ -212,7 +212,7 @@ fn joined_bodies<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
 
 fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
-        "clause body",
+        "body",
         alt((
             joined_bodies,
             flows_to_or_through_expr,
@@ -221,13 +221,16 @@ fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-fn joined_variable_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+// parse joined expressions inside a variable clause
+// needs to be called by variable_clause, i.e., this parses data *inside* a clause 
+// so that bodies are allowed to be present alone
+fn joined_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "joined variable expressions",
+        "joined clauses",
         tuple((
-            alt((clause_w_single_body, joined_bodies, body)),
+            alt((variable_clause, body)),
             operator, 
-            alt((joined_variable_clauses, variable_clause)),
+            alt((joined_clauses, variable_clause, body)),
         )));
     let (remainder, (src, operator, dest)) = combinator(s)?;
     let body = Box::new(TwoNodeObligation {src, dest});
@@ -241,35 +244,6 @@ fn joined_variable_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     Ok((remainder, node))
 }
 
-fn clause_w_single_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "variable clause",
-        tuple((
-            // first line; declare variable binding & open clause
-            quantifier,
-            terminated(variable, colon),
-            terminated(marker, open_paren),
-            // body of the clause & close clause
-            terminated(body, close_paren),
-        ))
-    );
-    let (remainder, (quantifier, variable, marker, body)) = combinator(s)?;
-
-    Ok((
-        remainder,
-        ASTNode::VarIntroduction(
-            Box::new(VariableClause {
-                binding : VariableBinding {
-                    quantifier,
-                    variable,
-                    marker
-                },
-                body
-            })
-        )
-    ))
-}
-
 fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
         "variable clause",
@@ -280,8 +254,8 @@ fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
             terminated(marker, open_paren),
             // body of the clause & close clause
             terminated(
-                    alt((joined_variable_clauses, variable_clause, body)), 
-                    close_paren
+                    alt((joined_clauses, variable_clause, body)), 
+                    terminated(close_paren, multispace0)
             ),
         ))
     );
@@ -302,11 +276,15 @@ fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-fn joined_exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+// joined_clauses is capable of parsing everything that this does
+// the difference is that joined_clauses lets *bodies* be joined together.
+// That's fine as long as we're already inside a variable clause, which is always the case when we call that parser.
+// But we don't want to allow bodies without variable bindings at the top level, hence this separate, more restrictive parser.
+fn joined_variable_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "expr operator expr",
+        "joined variable clauses",
         tuple((
-            alt((variable_clause, body)), 
+            variable_clause, 
             operator, 
             exprs
         )),
@@ -327,266 +305,47 @@ fn exprs<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "exprs",
         alt((
-            joined_exprs,
+            joined_variable_clauses,
             variable_clause,
-            body,
         ))
     )(s)
 }
 
-// TODO should force policy writers to specify and/or precedence w. parentheses if both and/or are in policy
-
-pub fn parse<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
+pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
     let mut combinator = context("parse policy", 
         all_consuming(
             tuple((
-                scope, exprs
+                scope, exprs,
             ))
         )
     );
     let (remainder, (scope, body)) = combinator(s)?;
     Ok((
         remainder,
-        PolicyBody {
+        Policy {
             scope,
             body
         }
     ))
 }
 
-/*
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
 
     #[test]
-    fn test_is_nonalphabetic() {
-        let spaces = "     ";
-        let comma = ",";
-        let period = ".";
-        let newline = "\n";
-        let punc = ",.\n";
-        let err = "this is alphabetical";
+    fn test_scope() {
+        let always = "always:";
+        let sometimes = "sometimes:";
+        let always_w_punc = "\nalways: \n";
+        let sometimes_w_punc = "\nsometimes: \n";
 
-        assert_eq!(multispace0(spaces), Ok(("", spaces)));
-        assert_eq!(multispace0(comma), Ok(("", comma)));
-        assert_eq!(multispace0(period), Ok(("", period)));
-        assert_eq!(multispace0(newline), Ok(("", newline)));
-        assert_eq!(multispace0(punc), Ok(("", punc)));
-        assert!(multispace0(err).is_err());
-    }
-
-    #[test]
-    fn test_marker() {
-        let a = "\"a\"";
-        let b = "\"sensitive\"";
-        let err1 = "sensitive";
-        let err2 = "\"sensitive";
-
-        assert_eq!(marker(a), Ok(("", "a")));
-        assert_eq!(marker(b), Ok(("", "sensitive")));
-        assert!(marker(err1).is_err());
-        assert!(marker(err2).is_err());
-    }
-
-    #[test]
-    fn test_variable() {
-        let var1 = "a";
-        let var2 = "sensitive";
-        let wrong = "123hello";
-        let partially_keyword = "a flows to b";
-
-        assert_eq!(variable(var1), Ok(("", Variable { name: "a" })));
-        assert_eq!(variable(var2), Ok(("", Variable { name: "sensitive" })));
-        assert_eq!(
-            variable(partially_keyword),
-            Ok(("flows to b", Variable { name: "a" }))
-        );
-        assert!(variable(wrong).is_err());
-    }
-
-    #[test]
-    fn test_expr() {
-        let through = "a flows to b through c";
-        let through_ans = ASTNode::Through(ThreeVarObligation {
-            src: Variable { name: "a" },
-            dest: Variable { name: "b" },
-            checkpoint: Variable { name: "c" },
-        });
-
-        let flows_to = "a flows to b";
-        let flows_to_ans = ASTNode::FlowsTo(TwoVarObligation {
-            src: Variable { name: "a" },
-            dest: Variable { name: "b" },
-        });
-        let control_flow = "a has control flow influence on b";
-        let control_flow_ans = ASTNode::ControlFlow(TwoVarObligation {
-            src: Variable { name: "a" },
-            dest: Variable { name: "b" },
-        });
-
-        let err1 = "a flows to";
-        let err2 = "a flows to b through";
-        let err3 = "a has control flow influence on";
-
-        assert_eq!(leaf_expr(through), Ok(("", through_ans)));
-        assert_eq!(leaf_expr(flows_to), Ok(("", flows_to_ans)));
-        assert_eq!(leaf_expr(control_flow), Ok(("", control_flow_ans)));
-        assert!(leaf_expr(err1).is_err());
-        assert!(leaf_expr(err2).is_err());
-        assert!(leaf_expr(err3).is_err());
-    }
-
-    #[test]
-    fn test_chained_leaf_expressions() {
-        let policy1 = "a flows to b";
-        let policy1_ans = ASTNode::FlowsTo(TwoVarObligation {
-            src: Variable { name: "a" },
-            dest: Variable { name: "b" },
-        });
-        let policy2 = "a flows to b and a flows to c";
-        let policy2_ans = ASTNode::And(Box::new(TwoNodeObligation {
-            src: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "a" },
-                dest: Variable { name: "b" },
-            }),
-            dest: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "a" },
-                dest: Variable { name: "c" },
-            }),
-        }));
-        let policy3 = "a has control flow influence on b or a flows to c and b flows to c";
-        let policy3_ans = ASTNode::And(Box::new(TwoNodeObligation {
-            src: ASTNode::Or(Box::new(TwoNodeObligation {
-                src: ASTNode::ControlFlow(TwoVarObligation {
-                    src: Variable { name: "a" },
-                    dest: Variable { name: "b" },
-                }),
-                dest: ASTNode::FlowsTo(TwoVarObligation {
-                    src: Variable { name: "a" },
-                    dest: Variable { name: "c" },
-                }),
-            })),
-            dest: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "b" },
-                dest: Variable { name: "c" },
-            }),
-        }));
-
-        let err1 = "a flows to";
-
-        assert_eq!(chained_leaf_exprs(policy1), Ok(("", policy1_ans)));
-        assert_eq!(chained_leaf_exprs(policy2), Ok(("", policy2_ans)));
-        assert_eq!(chained_leaf_exprs(policy3), Ok(("", policy3_ans)));
-        assert!(chained_leaf_exprs(err1).is_err());
-    }
-
-    #[test]
-    fn test_conditional() {
-        let policy1 = "if a flows to b, then c flows to d";
-        let policy1_ans = ASTNode::Implies(Box::new(TwoNodeObligation {
-            src: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "a" },
-                dest: Variable { name: "b" },
-            }),
-            dest: ASTNode::FlowsTo(TwoVarObligation {
-                src: Variable { name: "c" },
-                dest: Variable { name: "d" },
-            }),
-        }));
-        let policy2 = "if a flows to b and b flows to c, then c has control flow influence on d";
-        let policy2_ans = ASTNode::Implies(Box::new(TwoNodeObligation {
-            src: ASTNode::And(Box::new(TwoNodeObligation {
-                src: ASTNode::FlowsTo(TwoVarObligation {
-                    src: Variable { name: "a" },
-                    dest: Variable { name: "b" },
-                }),
-                dest: ASTNode::FlowsTo(TwoVarObligation {
-                    src: Variable { name: "b" },
-                    dest: Variable { name: "c" },
-                }),
-            })),
-            dest: ASTNode::ControlFlow(TwoVarObligation {
-                src: Variable { name: "c" },
-                dest: Variable { name: "d" },
-            }),
-        }));
-        let err1 = "a flows to b";
-        let err2 = "if a flows to b";
-        let err3 = "a flows to b then";
-
-        assert_eq!(implies(policy1), Ok(("", policy1_ans)));
-        assert_eq!(implies(policy2), Ok(("", policy2_ans)));
-        assert!(implies(err1).is_err());
-        assert!(implies(err2).is_err());
-        assert!(implies(err3).is_err());
-    }
-
-    #[test]
-    fn test_body() {
-        // TODO add more robust tests
-        // at some point the paper policy tests should make their way in here
-        // or at least ones approximating their functionality
-        let lemmy_comm = "always:
-        if community_struct flows to write,
-        then community_struct flows to delete_check and 
-        delete_check has control flow influence on write and
-        community_struct flows to ban_check and
-        ban_check has control flow influence on write";
-
-        let lemmy_comm_ans = PolicyBody {
-            scope: PolicyScope::Always,
-            body: ASTNode::Implies(Box::new(TwoNodeObligation {
-                src: ASTNode::FlowsTo(TwoVarObligation {
-                    src: Variable {
-                        name: "community_struct",
-                    },
-                    dest: Variable { name: "write" },
-                }),
-                dest: ASTNode::And(Box::new(TwoNodeObligation {
-                    src: ASTNode::And(Box::new(TwoNodeObligation {
-                        src: ASTNode::And(Box::new(TwoNodeObligation {
-                            src: ASTNode::FlowsTo(TwoVarObligation {
-                                src: Variable {
-                                    name: "community_struct",
-                                },
-                                dest: Variable {
-                                    name: "delete_check",
-                                },
-                            }),
-                            dest: ASTNode::ControlFlow(TwoVarObligation {
-                                src: Variable {
-                                    name: "delete_check",
-                                },
-                                dest: Variable { name: "write" },
-                            }),
-                        })),
-                        dest: ASTNode::FlowsTo(TwoVarObligation {
-                            src: Variable {
-                                name: "community_struct",
-                            },
-                            dest: Variable { name: "ban_check" },
-                        }),
-                    })),
-                    dest: ASTNode::ControlFlow(TwoVarObligation {
-                        src: Variable { name: "ban_check" },
-                        dest: Variable { name: "write" },
-                    }),
-                })),
-            })),
-        };
-
-        let err1 = "a flows to b or b flows to";
-        // can only have one, top-level conditionals as of now; this test may change in the future
-        let err2 = "if a flows to b and if b flows to c, then d flows to e";
-        let err3 = "a flows to b and a flows to";
-
-        assert_eq!(parse_body(lemmy_comm), Ok(("", lemmy_comm_ans)));
-
-        assert!(parse_body(err1).is_err());
-        assert!(parse_body(err2).is_err());
-        assert!(parse_body(err3).is_err());
+        assert_eq!(scope(always), Ok(("", PolicyScope::Always)));
+        assert_eq!(scope(always_w_punc), Ok(("", PolicyScope::Always)));
+        assert_eq!(scope(sometimes), Ok(("", PolicyScope::Sometimes)));
+        assert_eq!(scope(sometimes_w_punc), Ok(("", PolicyScope::Sometimes)));
     }
 
     #[test]
@@ -626,103 +385,695 @@ mod tests {
     }
 
     #[test]
-    fn test_single_binding() {
-        let binding1 = "let a = some \"a\"";
-        let binding1_ans = VariableClause {
-            variable: Variable { name: "a" },
-            quantifier: Quantifier::Some,
-            marker: "a",
-        };
-        let binding2 = "let sens = all \"sensitive\"";
-        let binding2_ans = VariableClause {
-            variable: Variable { name: "sens" },
-            quantifier: Quantifier::All,
-            marker: "sensitive",
-        };
-        let binding3 = "let delete_check = some \"community_delete_check\"\n        ";
-        let binding3_ans = VariableClause {
-            variable: Variable {
-                name: "delete_check",
-            },
-            quantifier: Quantifier::Some,
-            marker: "community_delete_check",
-        };
+    fn test_marker() {
+        let a = "\"a\"";
+        let b = "\"sensitive\"";
+        let err1 = "sensitive";
+        let err2 = "\"sensitive";
 
-        let var_in_quotes = "let \"a\" = some \"a\"";
-        let wrong_quantifier = "let a = any \"a\"";
-
-        assert_eq!(single_binding(binding1), Ok(("", binding1_ans)));
-        assert_eq!(single_binding(binding2), Ok(("", binding2_ans)));
-        assert_eq!(single_binding(binding3), Ok(("", binding3_ans)));
-        assert!(single_binding(var_in_quotes).is_err());
-        assert!(single_binding(wrong_quantifier).is_err());
+        assert_eq!(marker(a), Ok(("", "a")));
+        assert_eq!(marker(b), Ok(("", "sensitive")));
+        assert!(marker(err1).is_err());
+        assert!(marker(err2).is_err());
     }
 
     #[test]
-    fn test_bindings() {
-        let single_w_spaces = "let sens    = all \"sensitive\"   \n";
-        let single_ans = vec![VariableClause {
-            variable: Variable { name: "sens" },
-            quantifier: Quantifier::All,
-            marker: "sensitive",
-        }];
-        let multi_newline = "let commit = some \"commit\"\nlet store = some \"sink\"\nlet auth_check = all \"check_rights\"\n";
-        let multi_comma = "let commit = some \"commit\", let store = some \"sink\", let auth_check = all \"check_rights\"\n";
-        let multi_ans = vec![
-            VariableClause {
-                variable: Variable { name: "commit" },
-                quantifier: Quantifier::Some,
-                marker: "commit",
-            },
-            VariableClause {
-                variable: Variable { name: "store" },
-                quantifier: Quantifier::Some,
-                marker: "sink",
-            },
-            VariableClause {
-                variable: Variable { name: "auth_check" },
-                quantifier: Quantifier::All,
-                marker: "check_rights",
-            },
-        ];
-        let lemmy_comm = "let community_struct = some \"community\"
-        let delete_check = some \"community_delete_check\"
-        let ban_check = some \"community_ban_check\"
-        let write = some \"db_write\"";
-        let lemmy_comm_ans = vec![
-            VariableClause {
-                variable: Variable {
-                    name: "community_struct",
-                },
-                quantifier: Quantifier::Some,
-                marker: "community",
-            },
-            VariableClause {
-                variable: Variable {
-                    name: "delete_check",
-                },
-                quantifier: Quantifier::Some,
-                marker: "community_delete_check",
-            },
-            VariableClause {
-                variable: Variable { name: "ban_check" },
-                quantifier: Quantifier::Some,
-                marker: "community_ban_check",
-            },
-            VariableClause {
-                variable: Variable { name: "write" },
-                quantifier: Quantifier::Some,
-                marker: "db_write",
-            },
-        ];
+    fn test_variable() {
+        let var1 = "a";
+        let var2 = "sensitive";
+        let wrong = "123hello";
+        let partially_keyword = "a flows to b";
 
-        let not_separated = "let commit = some \"commit\"let store = some \"sink\"";
+        assert_eq!(variable(var1), Ok(("", "a")));
+        assert_eq!(variable(var2), Ok(("", "sensitive")));
+        assert_eq!(
+            variable(partially_keyword),
+            Ok((" flows to b", "a"))
+        );
+        assert!(variable(wrong).is_err());
+    }
 
-        assert_eq!(parse_bindings(single_w_spaces), Ok(("", single_ans)));
-        assert_eq!(parse_bindings(multi_newline), Ok(("", multi_ans.clone())));
-        assert_eq!(parse_bindings(multi_comma), Ok(("", multi_ans)));
-        assert_eq!(parse_bindings(lemmy_comm), Ok(("", lemmy_comm_ans)));
-        assert!(parse_bindings(not_separated).is_err());
+    #[test]
+    fn test_flows_to_or_through_expr() {
+        let policy1 = "a flows to b";
+        let policy1_ans = ASTNode::FlowsTo(TwoVarObligation {src: "a", dest: "b"});
+        let policy2 = "a flows to b through c";
+        let policy2_ans = ASTNode::Through(ThreeVarObligation {src: "a", dest: "b", checkpoint: "c"});
+        
+        let err1 = "a has control flow influence on b";
+        let err2 = "a flows to b through c through d";
+
+        assert_eq!(flows_to_or_through_expr(policy1), Ok(("", policy1_ans)));
+        assert_eq!(flows_to_or_through_expr(policy2), Ok(("", policy2_ans)));
+        assert!(flows_to_or_through_expr(err1).is_err());
+        assert_eq!(flows_to_or_through_expr(err2), Ok((" through d", ASTNode::Through(ThreeVarObligation { src: "a", dest: "b", checkpoint: "c" }))));
+    }
+
+    #[test]
+    fn test_body() {
+        let through = "a flows to b through c";
+        let through_ans = ASTNode::Through(ThreeVarObligation {
+            src: "a",
+            dest: "b" ,
+            checkpoint: "c" 
+        });
+
+        let flows_to = "a flows to b";
+        let flows_to_ans = ASTNode::FlowsTo(TwoVarObligation {
+            src: "a" ,
+            dest: "b" 
+        });
+        let control_flow = "a has control flow influence on b";
+        let control_flow_ans = ASTNode::ControlFlow(TwoVarObligation {
+            src: "a",
+            dest: "b" 
+        });
+
+        let joined1 = "a flows to b and a flows to b through c";
+        let joined1_ans = ASTNode::And(
+            Box::new(
+                TwoNodeObligation {
+                    src: ASTNode::FlowsTo(TwoVarObligation {
+                        src: "a", 
+                        dest: "b" 
+                    }),
+                    dest: ASTNode::Through(ThreeVarObligation {
+                        src: "a", 
+                        dest: "b",
+                        checkpoint: "c" 
+                    }),
+                }
+            )
+        );
+
+        let joined2 = "a flows to b and a flows to b through c or a has control flow influence on b";
+        let joined2_ans = ASTNode::And(
+            Box::new(
+                TwoNodeObligation {
+                    src: ASTNode::FlowsTo(TwoVarObligation {
+                        src: "a", 
+                        dest: "b" 
+                    }),
+                    dest: ASTNode::Or(
+                        Box::new(
+                            TwoNodeObligation {
+                                src: ASTNode::Through(
+                                    ThreeVarObligation {
+                                        src: "a", 
+                                        dest: "b",
+                                        checkpoint: "c"
+                                    }),
+                                dest: ASTNode::ControlFlow(
+                                    TwoVarObligation {
+                                        src: "a", 
+                                        dest: "b" 
+                                    }),
+                            }
+                        )),
+                }
+            )
+        );
+
+        let joined3 = "a has control flow influence on b implies a flows to c and b flows to c";
+        let joined3_ans = ASTNode::Implies(Box::new(TwoNodeObligation {
+            src: ASTNode::ControlFlow(TwoVarObligation{
+                src: "a",
+                dest: "b",
+            }),
+            dest: ASTNode::And(
+                Box::new(
+                    TwoNodeObligation {
+                        src: ASTNode::FlowsTo(TwoVarObligation {
+                            src: "a", 
+                            dest: "c" 
+                        }),
+                        dest: ASTNode::FlowsTo(TwoVarObligation {
+                            src: "b", 
+                            dest: "c" 
+                        }),
+                    }
+                ))
+        }));
+
+        let err1 = "a flows to";
+        let err2 = "a flows to b through";
+        let err3 = "a has control flow influence on";
+
+        assert_eq!(body(through), Ok(("", through_ans)));
+        assert_eq!(body(flows_to), Ok(("", flows_to_ans)));
+        assert_eq!(body(control_flow), Ok(("", control_flow_ans)));
+        assert_eq!(body(joined1), Ok(("", joined1_ans)));
+        assert_eq!(body(joined2), Ok(("", joined2_ans)));
+        assert_eq!(body(joined3), Ok(("", joined3_ans)));
+        assert!(body(err1).is_err());
+        assert_eq!(body(err2), Ok((" through", ASTNode::FlowsTo(TwoVarObligation {src: "a", dest: "b"}))));
+        assert!(body(err3).is_err());
+    }
+
+
+    #[test]
+    fn test_variable_clause() {
+        let simple_body = 
+            "all dc : \"delete_check\" ( 
+                dc flows to sink
+            )";
+        
+        let simple_body_ans =
+            ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                body: ASTNode::FlowsTo(TwoVarObligation{src: "dc", dest: "sink"})
+            }));
+        
+        let joined_body =
+            "all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts and dc flows to source
+            )";
+        let joined_body_ans =
+            ASTNode::VarIntroduction(Box::new (VariableClause {
+                binding: VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                body: ASTNode::Or(
+                    Box::new(TwoNodeObligation {
+                        src: ASTNode::FlowsTo(TwoVarObligation{src: "dc", dest: "sink"}),
+                        dest: ASTNode::And(Box::new(TwoNodeObligation {
+                            src: ASTNode::FlowsTo(TwoVarObligation{src: "dc", dest: "encrypts"}),
+                            dest: ASTNode::FlowsTo(TwoVarObligation{src: "dc", dest: "source"}),
+                        }))
+                    })
+                ) 
+            }));
+
+        let triple_nested = 
+            "some a : \"a\" (
+                some b : \"b\" (
+                    some c : \"c\" (
+                        a flows to c
+                    )
+                )
+            )";
+        let triple_nested_ans =
+        ASTNode::VarIntroduction(Box::new(VariableClause {
+            binding: VariableBinding {quantifier: Quantifier::Some, variable: "a", marker: "a"},
+            body: ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding {quantifier: Quantifier::Some, variable: "b", marker: "b"},
+                body: ASTNode::VarIntroduction(Box::new(VariableClause {
+                    binding: VariableBinding {quantifier: Quantifier::Some, variable: "c", marker: "c"},
+                    body: ASTNode::FlowsTo(TwoVarObligation{src: "a", dest: "c"})
+                }))
+            }))
+        }));
+
+        let lemmy_comm = "
+        some comm_data : \"community_data\" (
+            all write : \"db_write\" (
+                comm_data flows to write
+                implies
+                some comm_dc : \"community_delete_check\" (
+                    comm_data flows to comm_dc
+                    and
+                    comm_dc has control flow influence on write
+                ) and
+                some comm_bc : \"community_ban_check\" (
+                    comm_data flows to comm_bc
+                    and
+                    comm_bc has control flow influence on write
+                )
+            )
+        )";
+        let lemmy_comm_ans = ASTNode::VarIntroduction(Box::new(VariableClause {
+            binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_data", marker: "community_data" },
+            body: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                binding: VariableBinding { quantifier: Quantifier::All, variable: "write", marker: "db_write" }, 
+                body: ASTNode::Implies(Box::new(TwoNodeObligation { 
+                    src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "write" }), 
+                    dest: ASTNode::And(Box::new(TwoNodeObligation{
+                        src: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                            binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_dc", marker: "community_delete_check" }, 
+                            body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "comm_dc" }), 
+                                dest: ASTNode::ControlFlow(TwoVarObligation { src: "comm_dc", dest: "write" })
+                            })) 
+                        })),
+                        dest: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                            binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_bc", marker: "community_ban_check" }, 
+                            body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "comm_bc" }), 
+                                dest: ASTNode::ControlFlow(TwoVarObligation { src: "comm_bc", dest: "write" })
+                            })) 
+                        })),
+                    }))
+                }))
+            }))
+        }));
+
+        // should only parse the first *top level* variable clause
+        let lemmy_inst = 
+        "some dc: \"instance_delete_check\" (
+            all write : \"db_write\" (
+                dc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                dc has control flow influence on read
+            )
+        ) and 
+        some bc : \"instance_ban_check\" (
+            all write : \"db_write\" (
+                bc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                bc has control flow influence on read
+            )
+        )";
+        let lemmy_inst_partial = ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
+                body: ASTNode::And(Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "write"})
+                        })),
+                    dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "read", marker: "db_read"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "read"})
+                        })),
+                    }))
+            }));
+        let lemmy_inst_leftover = "and 
+        some bc : \"instance_ban_check\" (
+            all write : \"db_write\" (
+                bc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                bc has control flow influence on read
+            )
+        )";
+
+        // should be able to parse anything that joined_clauses can
+        // as long as it's wrapped in a variable binding
+        let wrapped =
+            "some dc : \"delete_check\" (
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+                implies
+                all dc : \"delete_check\" ( 
+                    dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+                )
+            )";
+        
+        let clause_with_joined_body_ans = 
+            ASTNode::Implies(
+                Box::new(TwoNodeObligation {
+                    src: ASTNode::Or(Box::new(TwoNodeObligation {
+                        src: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                        dest: ASTNode::And(
+                            Box::new(TwoNodeObligation {
+                                src: ASTNode::Through(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
+                                dest: ASTNode::ControlFlow(TwoVarObligation {src: "dc", dest: "source"})
+                            }))
+                        })),
+                    dest: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                                src: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                                dest: ASTNode::And(
+                                    Box::new(TwoNodeObligation {
+                                        src: ASTNode::Through(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
+                                        dest: ASTNode::ControlFlow(TwoVarObligation {src: "dc", dest: "source"})
+                                    }))
+                            }))
+                        }))
+             }));
+
+             let wrapped_ans = ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding {quantifier: Quantifier::Some, variable: "dc", marker: "delete_check"},
+                body: clause_with_joined_body_ans,
+             }));
+
+        assert_eq!(variable_clause(simple_body), Ok(("", simple_body_ans)));
+        assert_eq!(variable_clause(joined_body), Ok(("", joined_body_ans)));
+        assert_eq!(variable_clause(triple_nested), Ok(("", triple_nested_ans)));
+        assert_eq!(variable_clause(lemmy_comm), Ok(("", lemmy_comm_ans)));
+        assert_eq!(variable_clause(lemmy_inst), Ok((lemmy_inst_leftover, lemmy_inst_partial)));
+        assert_eq!(variable_clause(wrapped), Ok(("", wrapped_ans)));
+    }
+
+    #[test]
+    fn test_joined_clauses() {
+        let two_bodies = "a flows to b and b flows to c";
+        let three_bodies = "a flows to b and b flows to c and a flows to c";
+
+        let clause_with_simple_body_w_joined_variable_clauses = 
+            "all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            ) or
+            all dc : \"delete_check\" ( 
+                dc flows to sink
+            ) and
+            all dc : \"delete_check\" ( 
+                all dc : \"delete_check\" ( 
+                    dc flows to sink
+                )
+            )";
+        let clause_with_simple_body_w_joined_variable_clauses_ans = 
+            ASTNode::Or(
+                Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                                src: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                                dest: ASTNode::And(
+                                    Box::new(TwoNodeObligation {
+                                        src: ASTNode::Through(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
+                                        dest: ASTNode::ControlFlow(TwoVarObligation {src: "dc", dest: "source"})
+                                    }))
+                            }))
+                    })),
+                    dest: ASTNode::And(Box::new(TwoNodeObligation {
+                        src: ASTNode::VarIntroduction(
+                            Box::new(VariableClause {
+                                binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                                body: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                            })),
+                        dest: ASTNode::VarIntroduction(
+                            Box::new(VariableClause {
+                                binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                                body: ASTNode::VarIntroduction(
+                                    Box::new(VariableClause {
+                                        binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                                        body: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                                    }))
+                            }))
+                    })) 
+            }));
+        
+        let clause_with_simple_body_w_variable_clause = 
+            "all dc : \"delete_check\" ( 
+                dc flows to sink
+            ) or
+            all bc : \"ban_check\" ( 
+                bc flows to sink
+            )";
+        
+        let clause_with_simple_body_w_variable_clause_ans = 
+            ASTNode::Or(
+                Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                            body: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                        })),
+                    dest: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "bc", marker: "ban_check"},
+                            body: ASTNode::FlowsTo(TwoVarObligation {src: "bc", dest: "sink"}),
+                        })),
+             }));
+        
+        let clause_with_joined_body =
+            "dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            implies
+            all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            )";
+        
+        let clause_with_joined_body_ans = 
+            ASTNode::Implies(
+                Box::new(TwoNodeObligation {
+                    src: ASTNode::Or(Box::new(TwoNodeObligation {
+                        src: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                        dest: ASTNode::And(
+                            Box::new(TwoNodeObligation {
+                                src: ASTNode::Through(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
+                                dest: ASTNode::ControlFlow(TwoVarObligation {src: "dc", dest: "source"})
+                            }))
+                        })),
+                    dest: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                                src: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                                dest: ASTNode::And(
+                                    Box::new(TwoNodeObligation {
+                                        src: ASTNode::Through(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
+                                        dest: ASTNode::ControlFlow(TwoVarObligation {src: "dc", dest: "source"})
+                                    }))
+                            }))
+                        }))
+             }));
+        
+        let multiple_bodies = 
+            "dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            and
+            bc flows to encrypts
+            implies
+            all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            ) or
+            dc flows to encrypts";
+
+        let multiple_bodies_ans = ASTNode::Implies(
+            Box::new(TwoNodeObligation { 
+            // the four statements in the body
+            src: ASTNode::Or(Box::new(TwoNodeObligation { 
+                src: ASTNode::FlowsTo(TwoVarObligation { src: "dc", dest: "sink" }), 
+                dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                    src: ASTNode::Through(ThreeVarObligation { src: "dc", dest: "encrypts", checkpoint: "bc" }), 
+                    dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                        src: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "source" }), 
+                        dest: ASTNode::FlowsTo(TwoVarObligation { src: "bc", dest: "encrypts" })}))}))})), 
+            // "implies" the rest
+            dest: ASTNode::Or(Box::new(TwoNodeObligation { 
+                src: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                    binding: VariableBinding { quantifier: Quantifier::All, variable: "dc", marker: "delete_check" }, 
+                    body: ASTNode::Or(Box::new(TwoNodeObligation { 
+                        src: ASTNode::FlowsTo(TwoVarObligation { src: "dc", dest: "sink" }), 
+                        dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                            src: ASTNode::Through(ThreeVarObligation { src: "dc", dest: "encrypts", checkpoint: "bc" }), 
+                            dest: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "source" }) }))}))})), 
+                dest: ASTNode::FlowsTo(TwoVarObligation { src: "dc", dest: "encrypts" }) })) }));
+        
+        
+        assert_eq!(joined_clauses(clause_with_simple_body_w_joined_variable_clauses), Ok(("", clause_with_simple_body_w_joined_variable_clauses_ans)));
+        assert_eq!(joined_clauses(clause_with_simple_body_w_variable_clause), Ok(("", clause_with_simple_body_w_variable_clause_ans)));
+        assert_eq!(joined_clauses(clause_with_joined_body), Ok(("", clause_with_joined_body_ans)));
+        assert_eq!(joined_clauses(multiple_bodies), Ok(("", multiple_bodies_ans)));
+        // errors b/c body already covers multiple conjoined bodies
+        // this parser gets >1 body joined *with* variable clauses
+        assert!(joined_clauses(two_bodies).is_err());
+        assert!(joined_clauses(three_bodies).is_err());
+    }
+
+    #[test]
+    fn test_joined_variable_clauses() {
+        let lemmy_inst = 
+        "some dc: \"instance_delete_check\" (
+            all write : \"db_write\" (
+                dc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                dc has control flow influence on read
+            )
+        ) and 
+        some bc : \"instance_ban_check\" (
+            all write : \"db_write\" (
+                bc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                bc has control flow influence on read
+            )
+        )";
+        let lemmy_inst_ans = ASTNode::And(Box::new(TwoNodeObligation {
+            src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
+                body: ASTNode::And(Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "write"})
+                        })),
+                    dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "read", marker: "db_read"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "read"})
+                        })),
+                    }))
+                })),
+            dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding { quantifier: Quantifier::Some, variable: "bc", marker: "instance_ban_check" },
+                body: ASTNode::And(Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "bc", dest: "write"})
+                        })),
+                    dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                        binding: VariableBinding {quantifier: Quantifier::All, variable: "read", marker: "db_read"},
+                        body: ASTNode::ControlFlow(TwoVarObligation { src: "bc", dest: "read"})
+                        })),
+                    }))
+                })),
+        }));
+
+        let triple_clauses = 
+        "all dc : \"delete_check\" ( 
+            dc flows to sink
+        ) or
+        all bc : \"ban_check\" ( 
+            bc flows to sink
+        ) and 
+        all ec : \"encrypts_check\" ( 
+            ec flows to sink
+        )";
+        
+        let triple_clauses_ans =
+            ASTNode::Or(
+                Box::new(TwoNodeObligation {
+                    src: ASTNode::VarIntroduction(
+                        Box::new(VariableClause {
+                            binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
+                            body: ASTNode::FlowsTo(TwoVarObligation {src: "dc", dest: "sink"}),
+                        })),
+                    dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                        src: ASTNode::VarIntroduction(
+                            Box::new(VariableClause {
+                                binding : VariableBinding {quantifier: Quantifier::All, variable: "bc", marker: "ban_check"},
+                                body: ASTNode::FlowsTo(TwoVarObligation {src: "bc", dest: "sink"}),
+                            })),
+                        dest: ASTNode::VarIntroduction(
+                            Box::new(VariableClause {
+                                binding : VariableBinding {quantifier: Quantifier::All, variable: "ec", marker: "encrypts_check"},
+                                body: ASTNode::FlowsTo(TwoVarObligation {src: "ec", dest: "sink"}),
+                            })),
+                    }))
+             }));
+        
+        // can't have bodies w/o bindings
+        let multiple_bodies = 
+            "dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            and
+            bc flows to encrypts
+            implies
+            all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            ) or
+            dc flows to encrypts";
+        
+        let clause_with_joined_body =
+            "dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            implies
+            all dc : \"delete_check\" ( 
+                dc flows to sink or dc flows to encrypts through bc and dc has control flow influence on source
+            )";
+
+        assert_eq!(joined_variable_clauses(lemmy_inst), Ok(("", lemmy_inst_ans)));
+        assert_eq!(joined_variable_clauses(triple_clauses), Ok(("", triple_clauses_ans)));
+        assert!(joined_variable_clauses(multiple_bodies).is_err());
+        assert!(joined_variable_clauses(clause_with_joined_body).is_err());
+
+    }
+
+    #[test]
+    fn test_parse() {
+        let lemmy_inst = 
+        "always:
+        some dc: \"instance_delete_check\" (
+            all write : \"db_write\" (
+                dc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                dc has control flow influence on read
+            )
+        ) and 
+        some bc : \"instance_ban_check\" (
+            all write : \"db_write\" (
+                bc has control flow influence on write
+            )
+            and
+            all read: \"db_read\" (
+                bc has control flow influence on read
+            )
+        )";
+        let lemmy_inst_ans = Policy {
+            scope : PolicyScope::Always, 
+            body: ASTNode::And(Box::new(TwoNodeObligation {
+                src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                    binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
+                    body: ASTNode::And(Box::new(TwoNodeObligation {
+                        src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                            binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
+                            body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "write"})
+                            })),
+                        dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                            binding: VariableBinding {quantifier: Quantifier::All, variable: "read", marker: "db_read"},
+                            body: ASTNode::ControlFlow(TwoVarObligation { src: "dc", dest: "read"})
+                            })),
+                        }))
+                    })),
+                dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                    binding: VariableBinding { quantifier: Quantifier::Some, variable: "bc", marker: "instance_ban_check" },
+                    body: ASTNode::And(Box::new(TwoNodeObligation {
+                        src: ASTNode::VarIntroduction(Box::new(VariableClause {
+                            binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
+                            body: ASTNode::ControlFlow(TwoVarObligation { src: "bc", dest: "write"})
+                            })),
+                        dest: ASTNode::VarIntroduction(Box::new(VariableClause {
+                            binding: VariableBinding {quantifier: Quantifier::All, variable: "read", marker: "db_read"},
+                            body: ASTNode::ControlFlow(TwoVarObligation { src: "bc", dest: "read"})
+                            })),
+                        }))
+                    })),
+                }))
+            };
+
+        let lemmy_comm = "
+            always:
+            some comm_data : \"community_data\" (
+            all write : \"db_write\" (
+                comm_data flows to write
+                implies
+                some comm_dc : \"community_delete_check\" (
+                    comm_data flows to comm_dc
+                    and
+                    comm_dc has control flow influence on write
+                ) and
+                some comm_bc : \"community_ban_check\" (
+                    comm_data flows to comm_bc
+                    and
+                    comm_bc has control flow influence on write
+                )
+            )
+        )";
+        let lemmy_comm_ans = Policy {
+            scope: PolicyScope::Always,
+            body: ASTNode::VarIntroduction(Box::new(VariableClause {
+                binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_data", marker: "community_data" },
+                body: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                    binding: VariableBinding { quantifier: Quantifier::All, variable: "write", marker: "db_write" }, 
+                    body: ASTNode::Implies(Box::new(TwoNodeObligation { 
+                        src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "write" }), 
+                        dest: ASTNode::And(Box::new(TwoNodeObligation{
+                            src: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                                binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_dc", marker: "community_delete_check" }, 
+                                body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                    src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "comm_dc" }), 
+                                    dest: ASTNode::ControlFlow(TwoVarObligation { src: "comm_dc", dest: "write" })
+                                })) 
+                            })),
+                            dest: ASTNode::VarIntroduction(Box::new(VariableClause { 
+                                binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_bc", marker: "community_ban_check" }, 
+                                body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                    src: ASTNode::FlowsTo(TwoVarObligation { src: "comm_data", dest: "comm_bc" }), 
+                                    dest: ASTNode::ControlFlow(TwoVarObligation { src: "comm_bc", dest: "write" })
+                                })) 
+                            })),
+                        }))
+                    }))
+                }))
+            }))
+        };
+        assert_eq!(parse(lemmy_comm), Ok(("", lemmy_comm_ans)));
+        assert_eq!(parse(lemmy_inst), Ok(("", lemmy_inst_ans)));
     }
 }
-*/
