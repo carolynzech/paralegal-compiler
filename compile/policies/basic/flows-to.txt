@@ -1,6 +1,6 @@
 Always:
 all sens : "sensitive" (
     some encrypts : "encrypts" (
-        sensitive flows to encrypts
+        sens flows to encrypts
     )
 )

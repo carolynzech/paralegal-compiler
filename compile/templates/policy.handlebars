@@ -37,8 +37,8 @@ impl ContextExt for Context {
 }
 
 policy!(pol, ctx { 
-    {{scope}}
-    {{obligation}}
+    {{policy}}
+    Ok(())
 });
 
 fn main() -> Result<()> {

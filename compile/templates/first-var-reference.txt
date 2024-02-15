@@ -1,1 +1,0 @@
-{{src_var}}_nodes.{{src_func_call}}(|{{src_var}}|

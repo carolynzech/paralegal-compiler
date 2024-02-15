@@ -1,7 +1,8 @@
 use std::env;
 use std::fs;
+use std::process::Command;
 
-// use compile::compile;
+use compile::compile;
 use compile::parsers::parse;
 use std::io::Result;
 
@@ -15,28 +16,15 @@ fn run(args: &Vec<String>) -> Result<()> {
         .to_lowercase();
 
     let res = parse(&policy);
-    dbg!(&res);
-
-    // let bindings_res = parse_bindings(&policy);
-    // match bindings_res {
-    //     Ok((remainder, bindings)) => {
-    //         // let mut env: HashMap<String, (Quantifier, String)> = HashMap::new();
-    //         // construct_env(bindings, &mut env);
-    //         let body_res = parse_body(remainder);
-    //         // dbg!(&body_res)
-    //         match body_res {
-    //             Ok((_, policy_body)) => compile(policy_body, bindings)?,
-    //             Err(e) => panic!("{}", e),
-    //         }
-    //     }
-    //     Err(e) => panic!("{}", e),
-    // };
-
-    Ok(())
+    match res {
+        Ok((_, ast)) => compile(ast),
+        Err(e) => panic!("{}", e),
+    }
 }
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     run(&args)?;
+    // Command::new("rustfmt compiled-policy.rs").output().expect("failed to run cargo fmt");
     Ok(())
 }

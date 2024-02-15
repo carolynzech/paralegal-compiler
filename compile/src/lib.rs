@@ -1,8 +1,6 @@
 use handlebars::{no_escape, Handlebars};
-use lazy_static::lazy_static;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fs;
 use std::io::Result;
 
@@ -10,26 +8,16 @@ pub mod parsers;
 
 const BASE_TEMPLATE: &str = "base";
 const ALWAYS_TEMPLATE: &str = "always";
-const INTRODUCE_VAR: &str = "first-var-reference";
+const SOMETIMES_TEMPLATE: &str = "sometimes";
+const ALL_VAR_INTRO_TEMPLATE: &str = "all-var-intro";
+const SOME_VAR_INTRO_TEMPLATE: &str = "some-var-intro";
 const FLOWS_TO_TEMPLATE: &str = "flows-to";
 const CONTROL_FLOW_TEMPLATE: &str = "control-flow";
 const THROUGH_TEMPLATE: &str = "through";
-const IF_FLOWS_TO_SOME_SOME: &str = "if-flows-to-some-some";
-
-lazy_static! {
-    static ref TEMPLATES: HashMap<&'static str, &'static str> = {
-        let m = HashMap::from([
-            (BASE_TEMPLATE, "templates/base.txt"),
-            (INTRODUCE_VAR, "templates/first-var-reference.txt"),
-            (FLOWS_TO_TEMPLATE, "templates/flows-to.txt"),
-            (CONTROL_FLOW_TEMPLATE, "templates/control-flow.txt"),
-            (THROUGH_TEMPLATE, "templates/through.txt"),
-            (ALWAYS_TEMPLATE, "templates/scope/always.txt"),
-            (IF_FLOWS_TO_SOME_SOME, "templates/if-flows-to/some-some.txt"),
-        ]);
-        m
-    };
-}
+const IMPLIES_TEMPLATE: &str = "implies";
+const AND_TEMPLATE: &str = "and";
+const OR_TEMPLATE: &str = "or";
+const NODES_TEMPLATE: &str = "nodes";
 
 /* TODOs
     (Functionality)
@@ -59,16 +47,13 @@ lazy_static! {
 pub enum Quantifier {
     Some,
     All,
-    // No,
 }
 
-impl From<&str> for Quantifier {
-    fn from(s: &str) -> Self {
-        match s {
-            "some" => Quantifier::Some,
-            "all" => Quantifier::All,
-            // "no" => Quantifier::No,
-            &_ => unimplemented!("no other quantifiers supported"),
+impl From<&Quantifier> for &str {
+    fn from(q: &Quantifier) -> Self {
+        match q {
+            &Quantifier::Some => "some",
+            &Quantifier::All => "all",
         }
     }
 }
@@ -116,7 +101,7 @@ impl From<&str> for Operator {
             "and" => Operator::And,
             "or" => Operator::Or,
             "implies" => Operator::Implies,
-            &_ => unimplemented!("no other conjunctions supported"),
+            &_ => unimplemented!("no other operators supported"),
         }
     }
 }
@@ -158,273 +143,146 @@ pub enum ASTNode<'a> {
     VarIntroduction(Box<VariableClause<'a>>)
 }
 
-fn func_call(q: &Quantifier) -> &str {
-    match q {
-        Quantifier::Some => "any",
-        Quantifier::All => "all",
-        // Quantifier::No => todo!(),
+// fn func_call(q: &Quantifier) -> &str {
+//     match q {
+//         Quantifier::Some => "any",
+//         Quantifier::All => "all",
+//         // Quantifier::No => todo!(),
+//     }
+// }
+
+fn node_to_template<'a>(node: &'a ASTNode<'a>) -> &'a str {
+    match node {
+        ASTNode::FlowsTo(_) => FLOWS_TO_TEMPLATE,
+        ASTNode::ControlFlow(_) => CONTROL_FLOW_TEMPLATE,
+        ASTNode::Through(_) => THROUGH_TEMPLATE,
+        ASTNode::And(_) => AND_TEMPLATE,
+        ASTNode::Or(_) => OR_TEMPLATE,
+        ASTNode::Implies(_) => IMPLIES_TEMPLATE,
+        ASTNode::VarIntroduction(ob) => {
+            match ob.binding.quantifier {
+                Quantifier::All => ALL_VAR_INTRO_TEMPLATE,
+                Quantifier::Some => SOME_VAR_INTRO_TEMPLATE,
+            }
+        }
     }
 }
 
-/*
-fn register_and_render_template<'a, T: serde::Serialize, U: serde::Serialize>(
+fn scope_to_template(scope : &PolicyScope) -> &str {
+    match scope {
+        PolicyScope::Always => ALWAYS_TEMPLATE,
+        PolicyScope::Sometimes => SOMETIMES_TEMPLATE
+    }
+}
+
+fn register_templates(handlebars: &mut Handlebars) {
+    let templates: Vec<(&str, &str)> = Vec::from([
+        (BASE_TEMPLATE, "templates/policy.handlebars"),
+        (ALL_VAR_INTRO_TEMPLATE, "templates/astnodes/all-intro.handlebars"),
+        (SOME_VAR_INTRO_TEMPLATE, "templates/astnodes/some-intro.handlebars"),
+        (FLOWS_TO_TEMPLATE, "templates/astnodes/flows-to.handlebars"),
+        (CONTROL_FLOW_TEMPLATE, "templates/astnodes/control-flow.handlebars"),
+        (THROUGH_TEMPLATE, "templates/astnodes/through.handlebars"),
+        (AND_TEMPLATE, "templates/astnodes/and.handlebars"),
+        (OR_TEMPLATE, "templates/astnodes/or.handlebars"),
+        (IMPLIES_TEMPLATE, "templates/astnodes/implies.handlebars"),
+        (ALWAYS_TEMPLATE, "templates/scope/always.handlebars"),
+        (SOMETIMES_TEMPLATE, "templates/scope/sometimes.handlebars"),
+        (NODES_TEMPLATE, "templates/nodes.handlebars")
+    ]);
+    
+    for (name, path) in templates {
+        handlebars
+        .register_template_file(name, path)
+        .expect(&format!(
+            "Could not register {name} template with handlebars"
+        ));
+    }
+}
+
+fn render_template<'a, T: serde::Serialize, U: serde::Serialize>(
     handlebars: &mut Handlebars,
-    map: &mut HashMap<T, U>,
-    registered_templates: &mut HashSet<&'a str>,
+    map: &HashMap<T, U>,
     name: &'a str,
 ) -> String {
-    if !registered_templates.contains(&name) {
-        handlebars
-            .register_template_file(name, TEMPLATES[name])
-            .expect(&format!(
-                "Could not register {name} template with handlebars"
-            ));
-        registered_templates.insert(name);
-    }
     handlebars
         .render(name, &map)
         .expect(&format!("Could not render {name} handlebars template"))
 }
 
-fn compile_policy_scope<'a>(
+fn traverse_ast<'a>(
     handlebars: &mut Handlebars,
-    scope: PolicyScope,
-    bindings: &Vec<VariableClause>,
-    mut registered_templates: &mut HashSet<&'a str>,
-) -> String {
-    match scope {
-        PolicyScope::Always => {
-            let mut map: HashMap<&str, Vec<VariableClause>> = HashMap::new();
-            map.insert("bindings", bindings.to_vec());
-
-            register_and_render_template(
-                handlebars,
-                &mut map,
-                &mut registered_templates,
-                ALWAYS_TEMPLATE,
-            )
-        }
-        PolicyScope::Sometimes => {
-            todo!()
-        }
-    }
-}
-
-fn unionize_var_sets<'a>(left_set : &HashSet<Variable<'a>>, right_set: &HashSet<Variable<'a>>, union: &mut HashSet<Variable<'a>>) {
-    let ref_union: HashSet<&Variable<'a>> = left_set.union(&right_set).collect();
-    // TODO there must be a more idiomatic way of doing this
-    for var_ref in ref_union {
-        let var = var_ref.clone().to_owned();
-        union.insert(var);
-    }
-}
-
-// bottom-up tree traversal to determine the set of all variables that a node & its children reference
-fn determine_var_scope<'a>(
     node: &ASTNode<'a>,
-    references: &mut HashMap<ASTNode<'a>, HashSet<Variable<'a>>>,
-) {
+    env: &mut HashMap<Variable<'a>, Marker<'a>>
+) -> String {
     let mut map: HashMap<&str, &str> = HashMap::new();
     match node {
-        ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation) => {
-            references[node] = HashSet::from([obligation.src, obligation.dest]);
-        },
-        ASTNode::Through(obligation) => {
-            references[node] = HashSet::from([obligation.src, obligation.dest, obligation.checkpoint]);
-        },
-        ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Implies(obligation) => {
-            determine_var_scope(&obligation.src, references);
-            determine_var_scope(&obligation.dest, references);
-            
-            // this node's var scope is the set of its children's
-            let left_set: HashSet<Variable<'a>> = references[&obligation.src];
-            let right_set: HashSet<Variable<'a>> = references[&obligation.dest];
-            
-            let mut union : HashSet<Variable<'a>> = HashSet::new();
-            unionize_var_sets(&left_set, &right_set, &mut union);
-            references[node] = union;
-
-        },
-    }
-}
-
-/*
-STEP 2:
-**Pretty Printing**
-
-if you're opening and closing, output this:
-let [var_name] (
-    {rest}
-)
-
-at a non-leaf, 
-rest = 
-    {conjunction type}
-    {recursive result}
-
-at a leaf, rest = {leaf node}
-
-let [encrypts] (
-    And (
-        let [passwords] (
-            FlowsTo(passwords, encrypts)
-        )
-        let [private_keys] (
-            FlowsTo(private_keys, encrypts)
-        )
-    )
-)
-*/
-
-enum IntermediateNode<'a> {
-    Binding(Box<BindingBody<'a>>),
-    Implies(Box<NonLeafNodeBody<'a>>),
-    And(Box<NonLeafNodeBody<'a>>),
-    Or(Box<NonLeafNodeBody<'a>>),
-    FlowsTo(TwoVarObligation<'a>),
-    ControlFlow(TwoVarObligation<'a>),
-    Through(ThreeVarObligation<'a>),
-}
-
-struct BindingBody<'a> {
-    variable: Variable<'a>,
-    body: IntermediateNode<'a>
-}
-
-struct NonLeafNodeBody<'a> {
-    src: IntermediateNode<'a>,
-    dest: IntermediateNode<'a>
-}
-
-/*
-STEP 2:
-(recursive algorithm)
-From the top:
-For each var in that node's set:
-    - if the node is a nonleaf:
-        - if the var in the left child's set and the right child's set, this node introduces mark as visited
-        - otherwise, do nothing in this node
-    - if the node is a leaf, introduce any vars not in the visited set
-*/
-fn construct_intermediate_rep<'a>(
-    node: &ASTNode<'a>,
-    references: &mut HashMap<ASTNode<'a>, HashSet<Variable<'a>>>,
-    visited: &mut HashSet<Variable<'a>>,
-) -> IntermediateNode<'a> {
-    match node {
-        ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation) => {
-            // if src & dest both in visited, return LeafNode
-            // if one of them is, return binding of that node with LeafNode as body
-            // if neither of them are, return binding of dest, then src, then LeafNode as body
-            let body = IntermediateNode::FlowsTo(obligation.clone());
-
-            // TODO:
-            // one, you need to fix the body declaration since it could also be control flow
-            // two, I wonder if there's a more recursive way of doing this -- perhaps a recursive helper?
-            // going through all of the permutations is going to get ugly (9 possibilities!) for through
-            // the issue with recursion may be that you have to be careful about the order of introduction
-            // (e.g., how dest comes before src).
-            // but wait, for through this may not even matter because of how we call always_happens_before...
-            // (on all the nodes marked a thing)
-            if visited.contains(&obligation.src) && visited.contains(&obligation.dest) {
-                body
-            } else if visited.contains(&obligation.src) {
-                IntermediateNode::Binding(Box::new(
-                    BindingBody {
-                        variable: obligation.src,
-                        body
-                    }))
-            } else if visited.contains(&obligation.dest) {
-                IntermediateNode::Binding(Box::new(
-                    BindingBody {
-                        variable: obligation.dest,
-                        body
-                    }))
-            } else {
-                IntermediateNode::Binding(Box::new(
-                    BindingBody {
-                        variable: obligation.dest,
-                        body: IntermediateNode::Binding(Box::new(
-                            BindingBody {
-                                variable: obligation.src,
-                                body
-                            }
-                        ))
-                    }))
+        ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation)  => {
+            if !env.contains_key(obligation.src) || !env.contains_key(obligation.dest) {
+                panic!("Cannot reference variables that have not been introduced");
             }
+
+            map.insert("src", obligation.src);
+            map.insert("dest", obligation.dest);
+            render_template(handlebars, &map, node_to_template(&node))
         },
         ASTNode::Through(obligation) => {
-            todo!();
+            if !env.contains_key(obligation.src) || !env.contains_key(obligation.dest) | !env.contains_key(obligation.checkpoint) {
+                panic!("Cannot reference variables that have not been introduced");
+            }
+            // come back to this, depends on quantifier
+            todo!()
         },
         ASTNode::And(obligation) | ASTNode::Or(obligation) | ASTNode::Implies(obligation) => {
-            todo!();
+            let src_res = &traverse_ast(handlebars, &obligation.src, env);
+            map.insert("src", src_res);
+            let dest_res = &traverse_ast(handlebars, &obligation.dest, env);
+            map.insert("dest", dest_res);
+            render_template(handlebars, &map, node_to_template(&node))
         },
+        ASTNode::VarIntroduction(clause) => {
+            // TODO commenting out for now b/c of false positives where duplicate variables are in separate clauses (e.g., lemmy instance read/write)
+            // if env.contains_key(clause.binding.variable) {
+            //     panic!("Policy already introduced this variable; choose a different name");
+            // }
+            env.insert(clause.binding.variable, clause.binding.marker);
+
+            let res = &traverse_ast(handlebars, &clause.body, env);
+            map.insert("variable", clause.binding.variable);
+            map.insert("body", res);
+            render_template(handlebars, &map, node_to_template(&node))
+        }
     }
-}
-
-fn compile_ast<'a>(
-    handlebars: &mut Handlebars,
-    node: ASTNode<'a>,
-    bindings: &Vec<VariableClause>,
-    registered_templates: &mut HashSet<&'a str>,
-) -> String {
-    let mut references: HashMap<ASTNode<'a>, HashSet<Variable<'a>>> = HashMap::new();
-    determine_var_scope(
-        &node,
-        &mut references,
-    );
-    let mut visited: HashSet<Variable<'a>> = HashSet::new();
-    construct_intermediate_rep(
-        &node,
-        &mut references,
-        &mut visited,
-    );
-
-    // TODO some kind of error checking that vars in policy = vars in bindings
 }
 
 fn compile_policy<'a>(
     handlebars: &mut Handlebars,
-    policy_body: Policy<'a>,
-    bindings: Vec<VariableClause>,
+    policy: Policy<'a>,
 ) -> Result<()> {
+    let mut env: HashMap<Variable<'a>, Marker<'a>> = HashMap::new();
+    let obligation = traverse_ast(handlebars, &policy.body, &mut env);
+    
+    let mut nodes_map: HashMap<&str, HashMap<Variable<'a>, Marker<'a>>> = HashMap::new();
+    // TODO not sure if this is going to work or if env needs to be a list
+    nodes_map.insert("bindings", env);
+    let nodes = render_template(handlebars, &nodes_map, NODES_TEMPLATE);
+
     let mut map: HashMap<&str, &str> = HashMap::new();
-    // TODO: it may be easier to understand this codebase if you just
-    // register all the templates up front, regardless of whether you use them
-    let mut registered_templates: HashSet<&str> = HashSet::new();
+    map.insert("nodes", &nodes);
+    map.insert("obligation", &obligation);
+    let policy_logic = render_template(handlebars, &map, scope_to_template(&policy.scope));
+    map.clear();
 
-    let scope_res = compile_policy_scope(
-        handlebars,
-        policy_body.scope,
-        &bindings,
-        &mut registered_templates,
-    );
-
-    map.insert("scope", &scope_res);
-
-    let ast_res = compile_ast(
-        handlebars,
-        policy_body.body,
-        &bindings,
-        &mut registered_templates,
-    );
-    map.insert("obligation", &ast_res);
-
-    let res = register_and_render_template(
-        handlebars,
-        &mut map,
-        &mut registered_templates,
-        BASE_TEMPLATE,
-    );
+    map.insert("policy", &policy_logic);
+    let res = render_template(handlebars, &map, BASE_TEMPLATE);
 
     fs::write("compiled-policy.rs", &res)?;
     Ok(())
 }
 
-pub fn compile<'a>(policy_body: Policy<'a>, env: Vec<VariableClause>) -> Result<()> {
+pub fn compile<'a>(policy: Policy<'a>) -> Result<()> {
     let mut handlebars = Handlebars::new();
     handlebars.register_escape_fn(no_escape);
-    compile_policy(&mut handlebars, policy_body, env)
+    register_templates(&mut handlebars);
+    compile_policy(&mut handlebars, policy)
 }
-
-*/
