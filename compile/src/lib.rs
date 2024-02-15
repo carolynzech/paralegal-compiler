@@ -210,6 +210,15 @@ fn render_template<'a, T: serde::Serialize, U: serde::Serialize>(
         .expect(&format!("Could not render {name} handlebars template"))
 }
 
+fn verify_vars_in_scope<'a>(vars : Vec<&Variable<'a>>, env : &HashMap<Variable<'a>, Marker<'a>>) {
+    for var in vars {
+        if !env.contains_key(var) {
+            let msg = format!("Cannot reference variable {}; it has not been introduced", {var});
+            panic!("{}", msg);
+        }
+    }
+}
+
 fn traverse_ast<'a>(
     handlebars: &mut Handlebars,
     node: &ASTNode<'a>,
@@ -218,18 +227,13 @@ fn traverse_ast<'a>(
     let mut map: HashMap<&str, &str> = HashMap::new();
     match node {
         ASTNode::FlowsTo(obligation) | ASTNode::ControlFlow(obligation)  => {
-            if !env.contains_key(obligation.src) || !env.contains_key(obligation.dest) {
-                panic!("Cannot reference variables that have not been introduced");
-            }
-
+            verify_vars_in_scope(vec![&obligation.src, &obligation.dest], &env);
             map.insert("src", obligation.src);
             map.insert("dest", obligation.dest);
             render_template(handlebars, &map, node_to_template(&node))
         },
         ASTNode::Through(obligation) => {
-            if !env.contains_key(obligation.src) || !env.contains_key(obligation.dest) | !env.contains_key(obligation.checkpoint) {
-                panic!("Cannot reference variables that have not been introduced");
-            }
+            verify_vars_in_scope(vec![&obligation.src, &obligation.dest, &obligation.checkpoint], &env);
             // come back to this, depends on quantifier
             todo!()
         },
@@ -241,15 +245,18 @@ fn traverse_ast<'a>(
             render_template(handlebars, &map, node_to_template(&node))
         },
         ASTNode::VarIntroduction(clause) => {
-            // TODO commenting out for now b/c of false positives where duplicate variables are in separate clauses (e.g., lemmy instance read/write)
-            // if env.contains_key(clause.binding.variable) {
-            //     panic!("Policy already introduced this variable; choose a different name");
-            // }
+            if env.contains_key(clause.binding.variable) {
+                panic!("Policy already introduced this variable; choose a different name");
+            }
             env.insert(clause.binding.variable, clause.binding.marker);
 
             let res = &traverse_ast(handlebars, &clause.body, env);
             map.insert("variable", clause.binding.variable);
             map.insert("body", res);
+
+            // if the variable clause closes, the variable is now out of scope, so remove it from the environment
+            env.remove(clause.binding.variable);
+
             render_template(handlebars, &map, node_to_template(&node))
         }
     }
