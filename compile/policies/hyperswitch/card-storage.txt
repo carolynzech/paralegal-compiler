@@ -1,6 +1,3 @@
-let card = some "credit_card"
-let sink = some "store"
-let consent = some "future_usage_decision"
-
 Always:
-If card flows to sink, then consent has control flow influence on sink
+1. For each "credit_card" that flows to some "sink":
+    a. some "consent" has control flow influence on "sink"

@@ -1,7 +1,5 @@
-let apikey = all "apikey"
-let hash = some "hashed"
-let response = some "apikey_response"
-let expose = some "externalize"
-
 Always:
-apikey flows to expose through hash or apikey flows to expose through apikey_response
+1. For each "apikey":
+    a. "apikey" flows to some "expose" only via some "hash"
+    or
+    b. "apikey" flows to some "expose" only via some "apikey_response"

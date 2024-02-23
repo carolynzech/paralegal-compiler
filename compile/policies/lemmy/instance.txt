@@ -1,19 +1,10 @@
 Always:
-some dc: "instance_delete_check" (
-    all write : "db_write" (
-        dc has control flow influence on write
-    )
+1. For each "db_write":
+    a. some "instance_delete_check" has control flow influence on "db_write"
     and
-    all read: "db_read" (
-        dc has control flow influence on read
-    )
-) and 
-some bc : "instance_ban_check" (
-    all write : "db_write" (
-        bc has control flow influence on write
-    )
+    b. some "instance_ban_check" has control flow influence on "db_write"
+and
+2. For each "db_read" that is not a db_user_read:
+    a. some "instance_delete_check" has control flow influence on "db_read"
     and
-    all read: "db_read" (
-        bc has control flow influence on read
-    )
-)
+    b. some "instance_ban_check" has control flow influence on "db_read"

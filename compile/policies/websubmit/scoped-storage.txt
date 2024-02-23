@@ -1,10 +1,23 @@
-baseline:
-For all sensitives that flow to store, the store must have an associated call site such that a scope flows to it and
-an auth_witness flows to it.
+// Backwards-compatible version for current WebSubmit policies (i.e., write policy based on existing markers)
+// could support "call site associated with" with "invocation of" as syntactic sugar
+Always:
+1. For each "store" that some "sensitive" flows to:
+    a. There exists some "scope" such that:
+        i. "scope" flows to the call site associated with "store"
+        and
+        ii. some "auth witness" flows to "scope"
 
-library:
-For all sensitives that flow to store, the store must have an associated call site such that a scope flows to it and
-an request_generated flows to it.
-
-strict:
-same as baseline.
+// Version where policy comes first (ignoring existing markers)
+// I'm assuming that "store" is on the call site, "sensitive" is on user data, and "authorized actor" is on api keys
+// This is slightly more permissive than the above policy because it lets the api key flow to *any* argument of the call site,
+// rather than enforcing that it flows to a *particular argument* marked scopes.
+// I could imagine this distinction being important if the api key itself is the thing being stored.
+// If api keys are also sensitive, then the fact that you're storing data of type api key implicitly authorizes you also,
+// instead of checking that the person actually doing the write is authorized.
+// Given our threat model and the fact that Rust enforces that arguments adhere to the specified types, 
+// I'm not sure that catching these types of edge cases is that critical,
+// and the CNL is capable of supporting the stricter policy if it's important.
+Always:
+1. For each "store" that some "sensitive" flows to:
+    a. There exists some "authorized actor" such that:
+        i. "authorized actor" flows to "store"

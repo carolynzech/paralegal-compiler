@@ -1,17 +1,11 @@
 Always:
-some comm_data : "community_data" (
-   all write : "db_write" (
-        comm_data flows to write
-        implies
-        some comm_dc : "community_delete_check" (
-            comm_data flows to comm_dc
-            and
-            comm_dc has control flow influence on write
-        ) and
-        some comm_bc : "community_ban_check" (
-            comm_data flows to comm_bc
-            and
-            comm_bc has control flow influence on write
-        )
-   )
-)
+1. For each "community_data" that flows to some "db_write":
+    a. There exists some "community_delete_check" such that:
+        i. "community_data" flows to "community_delete_check"
+        and
+        ii. "community_delete_check" has control flow influence on "db_write"
+    and
+    b. There exists some "community_ban_check" such that:
+        i. "community_data" flows to "community_ban_check"
+        and
+        ii. "community_ban_check" has control flow influence on "db_write"

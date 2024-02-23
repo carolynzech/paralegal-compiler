@@ -1,6 +1,13 @@
-WIP -- fairly complicated, also comment about it being hacky? can follow up w justus
+// Version assuming policy comes first (ignoring existing markers)
 
-- get everything marked pageviews
-- get all function calls marked time
-- get all call sites marked pageview_data
-- 
+// ensure that pageviews are stored with their dates (so that we can check for expiration later)
+Always:
+1. For each "pageview_data" that flows to some "store":
+    a. some "date" flows to "store"
+
+// ensure that some controller exists to delete expired pageviews
+In some expiration_check:
+2. For each "pageview_data":
+    a. "pageview_data" flows to "check_date"
+    and
+    b. "check_date" has control flow influence on some "deletes"

@@ -1,0 +1,9 @@
+Always:
+1. For each "commit" that flows to some "store":
+    a. There exists some "auth_check" such that:
+        i. "commit" flows to "auth_check"
+        and
+        ii. For each "new_resource" that "commit" flows to:
+            1. "new_resource" does not flow to "auth_check"
+        and
+        iii. "auth_check" has control flow influence on "store"

@@ -1,0 +1,7 @@
+In gdpr_deletes:
+1. For each "user_data" type:
+    a. There exists some source of "user_data"
+       and
+    b. There exists some "deletes":
+    such that:
+        i. source flows to "deletes"

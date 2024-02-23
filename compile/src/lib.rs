@@ -33,6 +33,7 @@ const NODES_TEMPLATE: &str = "nodes";
     - possible syntactic sugar for flows to / control flow influence
     - negation : "no quantifier" / "does not flow to"
     - "one" quantifier
+    - figure out which edge type "flows to" compiles to or if the grammar should let you specify
 
     (Good Practice / User Experience / Nits)
     - better error handling

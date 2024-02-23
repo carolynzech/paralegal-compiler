@@ -1,12 +1,40 @@
-baseline:
-For all sensitives that flow to a sink, the sink will have an associated call site where all scopes that flow to that call site,
-"roots" of the program (things w/o incoming data flow edges) must flow to scopes through safe_scopes.
-safe_scopes are things that are marked safe by safe directly or the safe_source_with_bless thing.
+// Backwards-compatible version for current WebSubmit policies (i.e., write policy based on existing markers)
+Always:
+1. For each "sensitive" that flows to some "sink":
+    a. For each "scopes" that flows to the call site associated with "sink":
+        i. input flows to "scopes" only via some "safe"
+        or
+        ii. 
+            1. input flows to "scopes" only via some "safe_with_bless"
+            and
+            2. some "bless_safe_source" flows to some "safe_with_bless"
 
-library:
-For all sensitives that flows to store. If store is a call site, we keep track of the scopes that flow into it, or it's the return
-of the controller, in which case the scopes are anything marked request_generated. Then same always happens before policy. 
-safe_scopes is anything marked safe_source, request_generated, server_state, from_storage.
+// Version where policy comes first (ignoring existing markers)
+Always:
+1. For each "sensitive" that flows to some "store":
+    // I added this -- not critical, but ensures that each store is in fact attributed to some actor (otherwise b. can be vacuously true)
+    a. There exists some "actor" that flows to "store"
+    and
+    b. For each "actor" that flows to "store":
+        // this is my approximation of "actor is an admin or a presenter"
+        i. "admin" flows to "actor"
+        or
+        ii. "presenter" flows to "actor"
 
-strict:
-same as baseline
+// Alternate version (with definition)
+Definition:
+1. *authorized actor* is:
+    a. All "actor"s such that:
+        i. "admin" flows to actor"
+        or
+        ii. "presenter" flows to actor"
+
+// Definitions let you reason about set membership.
+// I may not support this "is an" feature in my first draft (just to start smaller), 
+// but I think eventually it'd be a good feature for the CNL to have.
+Always:
+1. For each "sensitive" that flows to some "store":
+    a. There exists some *authorized actor* that flows to "store"
+    and
+    b. For each "actor" that flows to "store":
+        i. "actor" is an *authorized actor*
